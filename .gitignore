@@ -1,0 +1,44 @@
+# 依赖
+node_modules/
+
+# 🔴 运行时数据：含聊天记录/会话留档/记忆，**绝对不要提交**
+data/messages/
+data/sessions/
+data/memory/
+data/inbox/
+data/schedule/
+data/usage-today.json
+
+# 知识库（本地数据，不入库）
+data/knowledge/
+
+# 敏感配置：密钥与协议端令牌
+# data/config.json 含 API Key，默认忽略；首次运行会自动生成默认配置。
+# 若想随仓库提供一份干净模板，请提交 data/config.example.json。
+.env
+.env.*
+data/config.json
+
+# 协议端登录态 / 二维码（含账号信息）
+qrcode-login.png
+snowluma/
+
+# DSH 任务产物与本地工作区
+dsh-work/
+workspace/
+
+# 备份 / 临时 / 编辑器
+*.bak
+*.bak-*
+*.orig
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 构建产物
+dist/
+build/
+
