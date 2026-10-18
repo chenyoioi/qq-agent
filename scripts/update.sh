@@ -39,10 +39,32 @@ else
 fi
 
 log "重启服务：$SERVICE"
-if command -v systemctl >/dev/null && systemctl list-unit-files | grep -q "^${SERVICE}.service"; then
-  systemctl restart "$SERVICE"
+HAS_UNIT=0
+if [ -f "/etc/systemd/system/${SERVICE}.service" ]; then
+  HAS_UNIT=1
+elif command -v systemctl >/dev/null 2>&1 && systemctl cat "$SERVICE" >/dev/null 2>&1; then
+  HAS_UNIT=1
+fi
+
+# 先停 unit，避免 Restart=always 与被杀进程打架
+if [ "$HAS_UNIT" = "1" ]; then
+  systemctl stop "$SERVICE" >/dev/null 2>&1 || true
+fi
+
+# 清掉所有游离实例：update.sh 曾走过 else 分支留下孤儿进程占着 3210，
+# 新实例只能退到 3211，两个进程同时连 OneBot —— 会出现"有的消息没被新逻辑拦住"。
+strays="$(pgrep -f 'node .*src/server\.js' || true)"
+if [ -n "$strays" ]; then
+  log "清理游离实例：$(echo $strays | tr '\n' ' ')"
+  kill $strays 2>/dev/null || true
+  sleep 2
+  strays="$(pgrep -f 'node .*src/server\.js' || true)"
+  if [ -n "$strays" ]; then kill -9 $strays 2>/dev/null || true; sleep 1; fi
+fi
+
+if [ "$HAS_UNIT" = "1" ]; then
+  systemctl start "$SERVICE"
 else
-  pkill -f "node .*src/server.js" 2>/dev/null || true
   ( setsid nohup node src/server.js > "$HOME/qq-agent.log" 2>&1 & )
 fi
 
@@ -55,6 +77,10 @@ for i in $(seq 1 20); do
 done
 if curl -fsS --max-time 3 "$CONSOLE/api/status" >/dev/null 2>&1; then
   ext=$(curl -fsS --max-time 5 "$CONSOLE/api/skills" | jq -r '.summary | "扩展 \(.total) 个（启用 \(.active)，异常 \(.broken)）"' 2>/dev/null || echo "扩展状态未知")
+  instances="$(pgrep -fc 'node .*src/server\.js' || true)"
+  if [ "${instances:-0}" -gt 1 ]; then
+    echo "⚠️ 检测到 ${instances} 个服务实例，请检查是否有游离进程（pgrep -af 'src/server.js'）" >&2
+  fi
   log "OK：$CONSOLE · $ext"
 else
   echo "控制台未就绪，最近日志：" >&2

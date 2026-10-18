@@ -435,6 +435,8 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
     } : () => { unregisterToolsBySkill(manifest.id); },
     hooks: (mod.hooks && typeof mod.hooks === 'object') ? mod.hooks : {},
     providers: (mod.providers && typeof mod.providers === 'object') ? mod.providers : {},
+    // 扩展自带控制面板：由核心的 /api/plugin-ui/<id>/action 转发到这里
+    handleUiRequest: typeof mod.handleUiRequest === 'function' ? mod.handleUiRequest : null,
     promptSections: typeof mod.promptSections === 'function' ? mod.promptSections : null
   };
   skill.loadError = null;

@@ -439,6 +439,21 @@ export class Orchestrator {
       }
     }
 
+    // 本轮因额度被剔除的成员：即使整轮没被中止（还有别人有余额），也**不回复他们**。
+    // 提示词里声明一次，发送工具里再兜底拒绝 @/引用（模型可能不听话）。
+    let blockedUserIds = [];
+    if (!proactive) {
+      try {
+        const blockedFn = this.#capFirst('chat.blocked-users');
+        if (blockedFn) {
+          const got = await blockedFn({ chatKey, kind, chatId, sessionId: session.id });
+          if (Array.isArray(got)) blockedUserIds = got.map(String).filter(Boolean);
+        }
+      } catch (error) {
+        skillManager.recordError('chat.blocked-users', error);
+      }
+    }
+
     // 组装提示词（无 LLM 历史）
     const systemPrompt = buildSystemPrompt({ persona });
     const userPrompt = buildUserPrompt({
@@ -468,7 +483,11 @@ export class Orchestrator {
         .map((s) => (s.title ? `## ${s.title}\n${String(s.content).trim()}` : String(s.content).trim()))
         .join('\n\n')
       : '';
-    const fullUserPrompt = userPrompt + skillPrompt;
+    const blockedPrompt = blockedUserIds.length
+      ? '\n\n【静默成员】以下成员今日额度已用尽：' + blockedUserIds.join('、')
+        + '。不要回复、引用或 @ 他们；他们的消息已从本轮上下文中移除，不要提及、不要猜测或编造他们说了什么。'
+      : '';
+    const fullUserPrompt = userPrompt + skillPrompt + blockedPrompt;
 
     session.systemPrompt = systemPrompt;
     session.userPrompt = fullUserPrompt;
@@ -537,7 +556,9 @@ export class Orchestrator {
       sender: this.sender,
       session,
       emit: (type, payload) => this.emit(type, payload),
-      isMaster
+      isMaster,
+      // 本轮额度用尽、禁止回复的成员（send_message 兜底用）
+      blockedUserIds
     };
 
     const maxRounds = Math.max(1, Number(cfg.api.maxRounds) || 12);

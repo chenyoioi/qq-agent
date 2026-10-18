@@ -112,6 +112,23 @@ function builtinToolDefs() {
         try {
           const messages = normalizeMessageList(args.messages);
           if (!messages.length) return err('消息内容为空');
+          // 额度用尽的成员：不回复、不 @、不引用（提示词里已经声明过，这里做兜底）
+          const muted = Array.isArray(ctx.blockedUserIds) ? ctx.blockedUserIds.map(String) : [];
+          if (muted.length) {
+            if (args.atUserId && muted.includes(String(args.atUserId))) {
+              return err('该成员今日额度已用尽，不要 @ 他，也不要回复他。');
+            }
+            if (args.replyToMessageId) {
+              let hit = null;
+              try {
+                hit = (ctx.store?.recent(ctx.chatKey, { limit: 60 }) || [])
+                  .find((m) => m && String(m.mid) === String(args.replyToMessageId));
+              } catch { hit = null; }
+              if (hit && muted.includes(String(hit.senderId))) {
+                return err('这条消息的作者今日额度已用尽，不要引用/回复他。');
+              }
+            }
+          }
           const result = await ctx.sender.sendTextBatch(ctx.chatKey, messages, {
             replyToMessageId: args.replyToMessageId ?? null,
             atUserId: args.atUserId ?? null

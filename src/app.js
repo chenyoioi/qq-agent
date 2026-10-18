@@ -1565,7 +1565,52 @@ export function createApp({ log = console.log } = {}) {
         return json(res, 200, { ok: true, paused: false, marked });
       }
 
+      // 扩展自带控制面板的动作接口：POST /api/plugin-ui/<id>/action
+      if (pathname.startsWith('/api/plugin-ui/') && method === 'POST') {
+        const m = /^\/api\/plugin-ui\/([^/]+)\/action$/.exec(pathname);
+        if (!m) return json(res, 404, { error: '未知接口' });
+        const id = decodeURIComponent(m[1]);
+        const skill = skillManager.registry?.get?.(id);
+        if (!skill || typeof skill.handleUiRequest !== 'function') {
+          return json(res, 404, { error: `扩展 ${id} 未提供 UI 接口` });
+        }
+        const body = await readBody(req).catch(() => ({}));
+        try {
+          const out = await skill.handleUiRequest({ action: String(body.action || ''), payload: body.payload ?? body });
+          return json(res, 200, out ?? { ok: true });
+        } catch (error) {
+          return json(res, 500, { error: String(error?.message ?? error) });
+        }
+      }
+
       return json(res, 404, { error: `未知 API：${method} ${pathname}` });
+    }
+
+    // 扩展自带页面：/plugin-ui/<id>/<file> → plugins/<id>/ui/<file>（其次 skills/<id>/ui/）
+    if (pathname.startsWith('/plugin-ui/') && req.method === 'GET') {
+      const rest = pathname.slice('/plugin-ui/'.length);
+      const slash = rest.indexOf('/');
+      const id = decodeURIComponent(slash === -1 ? rest : rest.slice(0, slash));
+      const rel = (slash === -1 ? '' : rest.slice(slash + 1)) || 'index.html';
+      const types = {
+        '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+        '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+        '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
+      };
+      for (const base of [path.join(ROOT, 'plugins', id, 'ui'), path.join(ROOT, 'skills', id, 'ui')]) {
+        const baseAbs = path.resolve(base);
+        const full = path.resolve(baseAbs, rel);
+        if (full !== baseAbs && !full.startsWith(baseAbs + path.sep)) continue;   // 防路径穿越
+        try {
+          const data = fs.readFileSync(full);
+          res.writeHead(200, { 'content-type': types[path.extname(full)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+          res.end(data);
+          return;
+        } catch { /* 试下一个候选 */ }
+      }
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('plugin ui not found');
+      return;
     }
 
     // 静态 UI

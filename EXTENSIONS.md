@@ -91,3 +91,33 @@ Skill 是 Node ESM，**`import` 即执行任意本地代码**。原项目“无�
 - 只安装自己审过的扩展；
 - `permissions: ["web_fetch"]` 只控制 `api.fetch`，不限制 `fs`/`child_process`（Node 里没有沙箱）；
 - zip 安装只做结构校验（禁绝对路径/`..`/可执行文件/体积上限），不做代码审计。
+
+## 扩展自带控制面板
+
+插件可以在自己的 `ui/` 目录放页面，核心会把它们挂到：
+
+```
+/plugin-ui/<id>/index.html        → plugins/<id>/ui/index.html（或 skills/<id>/ui/）
+POST /api/plugin-ui/<id>/action   → 调用插件的 handleUiRequest({ action, payload })
+```
+
+`handleUiRequest` 由插件入口导出即可，参数与返回值完全由插件定义；核心只负责静态文件与转发，
+并做路径穿越校验。
+
+## 能力：`chat.blocked-users`（本轮禁止回复的成员）
+
+`chat.quota-gate` 决定"整轮要不要中止"；`chat.blocked-users` 回答"中止不了时该忽略谁"：
+
+```js
+'chat.blocked-users': (context) => ['123456']   // 本轮额度用尽、不许回复的 QQ 号
+```
+
+核心拿到名单后会：
+
+1. 在用户提示词末尾追加【静默成员】，要求模型不回复、不引用、不 @ 他们；
+2. 在 `send_message` 工具里兜底：`atUserId` 命中名单、或 `replyToMessageId` 指向他们的消息 → 直接报错拒绝；
+3. 名单同时放在 `ctx.blockedUserIds`，供其它工具复用。
+
+`quota-guard` 的实现（plugins/quota-guard/index.js）：
+`before-context` 里把 `blockedIds: [...overQuota]` 写进 runInfo，并导出
+`'chat.blocked-users': (ctx) => runStateFor(ctx)?.blockedIds || []`。

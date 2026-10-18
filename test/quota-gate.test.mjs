@@ -93,3 +93,37 @@ assert.equal(rateBlocked.code, 'rate-limited');
 ok('发送限流已满时返回 skip=rate-limited（零消耗）');
 
 console.log(`\nquota-guard 接线 ${pass} 项检查通过 ✅`);
+
+// ── 本轮被拦名单：核心据此"不回复他" ──────────────────────────────────
+const { buildToolDefs, executeTool } = await import(path.join(ROOT, 'src/tools.js'));
+updateConfig({ skills: { 'quota-guard': { enabled: true, resetHour: 0, defaultDailyLimit: 100 } } });
+
+const qg = skillManager.registry.get('quota-guard');
+const trig = [
+  { senderId: '111', senderName: 'A', text: '超额的人' },
+  { senderId: '222', senderName: 'B', text: '还有额度' }
+];
+await qg.hooks['before-context']({ chatKey: 'group:1', kind: 'group', triggerEntries: trig, sessionId: 's9' }, {});
+assert.deepEqual(trig.map((m) => m.senderId), ['222']);
+const blockedFn = skillManager.getCapabilityProviders('chat.blocked-users', {})[0].fn;
+assert.deepEqual(blockedFn({ sessionId: 's9' }), ['111']);
+ok('超额者的消息被剔除，且 blocked-users 能报出名单');
+
+const defs = buildToolDefs();
+const ctx = {
+  chatKey: 'group:1', chatId: '1', kind: 'group',
+  blockedUserIds: ['111'],
+  store: { recent: () => [{ mid: 'm-111', senderId: '111' }] },
+  sender: { sendTextBatch: async () => ({ sent: [{ text: 'x', messageId: 1 }], failed: [] }) },
+  session: { id: 's9', sent: [] },
+  emit: () => {}
+};
+const atBlocked = await executeTool(defs, ctx, 'send_message', JSON.stringify({ messages: 'hi', atUserId: '111' }));
+assert.equal(atBlocked.isError, true);
+const replyBlocked = await executeTool(defs, ctx, 'send_message', JSON.stringify({ messages: 'hi', replyToMessageId: 'm-111' }));
+assert.equal(replyBlocked.isError, true);
+const normal = await executeTool(defs, ctx, 'send_message', JSON.stringify({ messages: 'hi' }));
+assert.ok(!normal.isError);
+ok('send_message 拒绝 @/引用被拦者，普通发言不受影响');
+
+console.log(`\nquota-guard 静默成员 ${pass - 7} 项检查通过 ✅`);

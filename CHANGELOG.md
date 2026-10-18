@@ -1,5 +1,21 @@
 # 更新日志
 
+## 1.1.2（2026-10-18）
+
+### 新增
+
+- 扩展自带控制面板：`GET /plugin-ui/<id>/*` 静态页面 + `POST /api/plugin-ui/<id>/action` 转发到插件的 `handleUiRequest`
+  （quota-guard 的额度管理页现在能打开了；此前 404）；
+- 能力 `chat.blocked-users`：核心在提示词里声明【静默成员】，并在 `send_message` 里兜底拒绝 @/引用被拦者，
+  **额度用尽的人一条都不回**（包括他单独触发的整轮零消耗）。
+
+### 修复
+
+- 发现并清理“游离实例”：早先 update.sh 走过非 systemd 分支，留下一个占着 3210 的孤儿进程，
+  systemd 新实例退到 3211，两个进程同时连 OneBot —— 表现为“配额守卫时灵时不灵”。
+  update.sh 现在先停 unit、清扫 `node src/server.js` 游离进程、启动后校验实例数。
+- 启动日志误用 `summary.enabled`（应为 `active`）。
+
 ## 1.1.1（2026-10-18）
 
 ### 修复：Token 配额守卫（quota-guard）装了不生效
