@@ -280,7 +280,19 @@ export class Orchestrator {
     this.emit('chat-update', runKey);
 
     try {
-      await this.#runAgent(session, { kind, chatId, chatKey: runKey, triggerEntries, proactive, seq, taskContext, pushTask });
+      const runResult = await this.#runAgent(session, { kind, chatId, chatKey: runKey, triggerEntries, proactive, seq, taskContext, pushTask });
+      // 配额/限流拦截：这一轮一条 LLM 请求都没发出去，按"没回话"正常收尾。
+      // 刻意不设 session.error，所以不会走下面的错误/重试分支（重试也没意义）。
+      if (runResult && runResult.blocked) {
+        const why = runResult.code === 'rate-limited' ? '发送限流前置' : '扩展拦截';
+        this.sessions.finish(session.id, 'noreply');
+        this.emit('session-end', {
+          sessionId: session.id, chatKey: runKey, status: 'noreply',
+          blocked: true, blockCode: runResult.code, blockReason: runResult.reason,
+          sent: 0, usage: session.usage
+        });
+        this.emit('log', { text: `[配额守卫] ${why}：${runResult.reason}（未调用模型，零消耗）` });
+      }
     } catch (error) {
       session.error = String(error?.message ?? error);
       this.sessions.finish(session.id, 'error');
@@ -312,6 +324,18 @@ export class Orchestrator {
 
     // 记忆自动整理（后台静默，绝不阻塞/影响聊天主流程）
     this.#maybeConsolidateMemory(chatKey);
+  }
+
+  /** 取某个能力的第一个提供者函数（没有则 null）。能力名是核心与扩展之间唯一的契约。 */
+  #capFirst(name, context = {}) {
+    try {
+      for (const p of skillManager.getCapabilityProviders(name, context)) {
+        if (p && typeof p.fn === 'function') return p.fn;
+      }
+    } catch (error) {
+      skillManager.recordError(name, error);
+    }
+    return null;
   }
 
   async #runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, taskContext = null, pushTask = null }) {
@@ -372,6 +396,47 @@ export class Orchestrator {
       });
     } catch (error) {
       skillManager.recordError('before-context', error);
+    }
+
+    // ── 配额放行判定（quota-guard 这类插件）──────────────────────────────
+    // 这是唯一能让一轮运行"一条 LLM 请求都不发"就收尾的扩展点：
+    //   · 必须在 before-context 之后 —— 插件可能已经把超额者的消息从触发批里剔除；
+    //   · 必须在组装提示词之前 —— 被拦的一轮连提示词都不必拼。
+    // 没装/没启用对应插件时拿不到提供者，整段是空操作。
+    if (!proactive) {
+      // 只读的发送状态：插件据此判断"这一轮还发得出去吗"，发不出去就别问模型
+      let sendState = null;
+      try {
+        sendState = typeof this.sender?.canSend === 'function' ? this.sender.canSend(chatKey) : null;
+      } catch { sendState = null; }
+
+      const gateFn = this.#capFirst('chat.quota-gate');
+      if (gateFn) {
+        let decision = null;
+        try {
+          decision = await gateFn({
+            chatKey, kind, chatId,
+            triggerEntries,
+            store: this.store,
+            tier: 0,
+            willRespond: true,
+            selfId: this.onebot.selfId,
+            sessionId: session.id,
+            sendState,
+            sender: this.sender
+          });
+        } catch (error) {
+          // 插件判错绝不能让消息静默丢失：按"放行"处理，宁可多花一次钱
+          skillManager.recordError('quota-guard', error);
+        }
+        if (decision && decision.skip) {
+          return {
+            blocked: true,
+            code: String(decision.code || ''),
+            reason: String(decision.reason || '配额拦截')
+          };
+        }
+      }
     }
 
     // 组装提示词（无 LLM 历史）

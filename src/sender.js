@@ -42,6 +42,47 @@ export class SendQueue {
     this.hourTimes.set(chatKey, hour);
   }
 
+  /**
+   * 只读检查：这个会话现在还能不能发消息（不占用额度、不写任何状态）。
+   *
+   * 供 Skill 的 `chat.quota-gate` 在**请求模型之前**判断"这一轮发得出去吗"——
+   * 发不出去就别问模型，省掉"想完了却被限流挡回来"的纯浪费。
+   * 真正扣额度的仍然是发送那一刻的 #checkRate，所以先问后发不会重复计数。
+   */
+  canSend(chatKey) {
+    const now = Date.now();
+    const cfg = getConfig().send || {};
+    const maxMin = Number(cfg.maxPerMinute) || 0;
+    const maxHour = Number(cfg.maxPerHour) || 0;
+    const minute = (this.minuteTimes.get(chatKey) || []).filter((t) => now - t < 60000);
+    const hour = (this.hourTimes.get(chatKey) || []).filter((t) => now - t < 3600000);
+    if (maxMin > 0 && minute.length >= maxMin) {
+      return {
+        ok: false,
+        code: 'minute-limit',
+        reason: `发送频率已达上限（每分钟最多 ${maxMin} 条）`,
+        remainingMinute: 0,
+        remainingHour: maxHour > 0 ? Math.max(0, maxHour - hour.length) : null
+      };
+    }
+    if (maxHour > 0 && hour.length >= maxHour) {
+      return {
+        ok: false,
+        code: 'hour-limit',
+        reason: `发送频率已达上限（每小时最多 ${maxHour} 条）`,
+        remainingMinute: maxMin > 0 ? Math.max(0, maxMin - minute.length) : null,
+        remainingHour: 0
+      };
+    }
+    return {
+      ok: true,
+      code: null,
+      reason: '',
+      remainingMinute: maxMin > 0 ? Math.max(0, maxMin - minute.length) : null,
+      remainingHour: maxHour > 0 ? Math.max(0, maxHour - hour.length) : null
+    };
+  }
+
   #gap(text, isLast) {
     const cfg = getConfig().send;
     const min = Math.max(200, Number(cfg.minGapMs) || 1000);
