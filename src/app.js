@@ -1671,7 +1671,7 @@ export function createApp({ log = console.log } = {}) {
     try {
       await reloadSkills({ reason: 'boot' });
       const s = skillManager.summary(skillRuntimeContext());
-      log(`扩展已加载：${s.total ?? 0} 个（启用 ${s.enabled ?? 0}）`
+      log(`扩展已加载：${s.total ?? 0} 个（启用 ${s.active ?? 0}，异常 ${s.broken ?? 0}）`
         + (s.failed ? `，失败 ${s.failed}` : ''));
     } catch (error) {
       log(`[skill] 加载失败：${error?.message ?? error}`);
