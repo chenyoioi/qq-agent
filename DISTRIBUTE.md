@@ -146,3 +146,21 @@ npx electron-builder --win --x64
 4. 设置页填模型 API（baseUrl/key/model），点「测试一下」
 5. 白名单勾群 → 存档页发测试消息
 6. 想装扩展：把目录丢进 `skills/` 或 `plugins/`，或在「技能」页上传 zip
+
+---
+
+## 之后怎么保持最新
+
+代码改动 → 本地提交 → `git push origin main` → 各部署机执行：
+
+```bash
+bash scripts/update.sh
+```
+
+`update.sh` 做四件事：`git fetch` + `reset --hard origin/main`（只覆盖跟踪文件，`data/`、`skills/`、`plugins/` 里的内容原样保留）→ `npm ci --omit=dev` → 重启服务 → `/api/status` 健康检查并打印扩展加载情况。
+
+版本用 `git tag` 标记（当前 `v1.1.0`），需要回滚时：
+
+```bash
+git reset --hard v1.1.0 && npm ci --omit=dev && systemctl restart qq-agent
+```

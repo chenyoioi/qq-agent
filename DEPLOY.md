@@ -62,6 +62,9 @@ NapCat 约每 2 分钟刷新一次二维码，`qr-publish` 会同步更新放大
 ## 常用命令
 
 ```bash
+# 跟到远端最新版（拉代码 → 装依赖 → 重启 → 健康检查）
+bash scripts/update.sh
+
 # 换码/重新登录
 systemctl restart napcat
 
