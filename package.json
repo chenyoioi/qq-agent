@@ -12,7 +12,7 @@
     "start": "electron .",
     "server": "node src/server.js",
     "lint:account": "node test/lint-account-check.mjs",
-    "test": "node test/lint-account-check.mjs && node test/selftest.mjs",
+    "test": "node test/lint-account-check.mjs && node test/selftest.mjs && node test/skills.test.mjs",
     "test:prompt": "node test/test-prompt.mjs"
   },
   "dependencies": {

@@ -129,6 +129,19 @@ export const DEFAULT_CONFIG = {
     autoStart: false,         // 开机自启（仅 Electron 桌面端生效）
     closeToTray: true         // 点关闭 = 最小化到托盘
   },
+  // 扩展系统（skills/ + plugins/）
+  //   skills[id]    每个 Skill/Plugin 的开关与设置（唯一开关来源）
+  //   tools         工具总开关 / 分类开关 / 单工具覆盖
+  //   extensions    热重载等全局行为
+  skills: {},
+  tools: {
+    enabled: true,
+    categories: {},
+    overrides: {}
+  },
+  extensions: {
+    hotReload: true
+  },
   // 预算保险丝：今日估算成本达到上限（元）自动暂停；0 = 不限制
   budget: {
     dailyCostYuan: 0

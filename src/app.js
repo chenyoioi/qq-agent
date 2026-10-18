@@ -29,6 +29,12 @@ import { QrRefreshGuard } from './qr-refresh-guard.js';
 import { OneBotHealth } from './onebot-health.js';
 import { ScheduledTaskRunner } from './scheduled-tasks.js';
 import { createEventBus, todayKey } from './util.js';
+import { loadPlugins, watchPlugins, unloadSkill, SKILL_DIRS } from './plugin-loader.js';
+import { skillManager } from './skills/manager.js';
+import { setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
+import { listTools, getToolAvailability } from './tool-registry.js';
+import { KB_TOOL_NAMES } from './tools.js';
+import { validateZipStructure, unzipToModuleDir } from './zip-install.js';
 
 // 全局 fetch（undici）默认连接建立超时只有 10 秒，openrouter.ai 这类海外端点
 // 握手慢时会直接报 "Connect Timeout Error ... timeout: 10000ms"（注意这不是
@@ -84,6 +90,49 @@ export function createApp({ log = console.log } = {}) {
   const cfg = getConfig();
   const bus = createEventBus();
   const sseClients = new Set();
+  let pluginWatcher = null;
+
+  /** Skill 运行期上下文（可用性判断 / 提示词片段用）。 */
+  function skillRuntimeContext() {
+    const c = getConfig();
+    return {
+      model: c.api?.model,
+      provider: c.api?.provider,
+      visionEnabled: c.api?.vision !== false,
+      searchEnabled: c.webSearch?.enabled !== false
+    };
+  }
+
+  /**
+   * Skill 重扫：启动与「刷新」按钮共用的唯一入口。
+   * 重扫磁盘 → 激活已启用项 → 重建 watcher（fs.watch 在目录重建后会失效）。
+   */
+  async function reloadSkills({ reason = 'manual' } = {}) {
+    const result = await loadPlugins({ log });
+    for (const st of skillManager.list(skillRuntimeContext())) {
+      if (st.enabled && st.loaded) {
+        try { skillManager.activate(st.id, skillRuntimeContext()); } catch (error) {
+          log(`[skill] 激活 ${st.id} 失败：${error?.message ?? error}`);
+        }
+      }
+    }
+    const hotReloadOn = process.env.QQ_AGENT_DEV === '1'
+      || getConfig().extensions?.hotReload !== false;
+    try { pluginWatcher?.close?.(); } catch { /* ignore */ }
+    pluginWatcher = null;
+    if (hotReloadOn) {
+      pluginWatcher = watchPlugins({
+        log,
+        onReload: () => { reloadSkills({ reason: 'watch' }).catch(() => {}); }
+      });
+    }
+    if (reason !== 'boot') {
+      log(`[skill] 重扫完成（${reason}）：${result.loaded.length} 成功，${result.failed.length} 失败`
+        + (result.pruned?.length ? `，卸载 ${result.pruned.length} 个已删除项` : ''));
+      emit('skills-changed', { at: Date.now() });
+    }
+    return result;
+  }
 
   // ── SnowLuma 程序目录与进程管理 ──
   function snowlumaDir() {
@@ -1009,6 +1058,217 @@ export function createApp({ log = console.log } = {}) {
         }
       }
 
+      // ── 扩展（Skill / Plugin）管理 ──────────────────────────────────
+      if (pathname === '/api/skills' && method === 'GET') {
+        const context = skillRuntimeContext();
+        const installed = new Set(skillManager.list(context).map((s) => s.id));
+        const uninstalled = listConfiguredSkillIds()
+          .filter((id) => !installed.has(id))
+          .map((id) => ({ id, enabled: getConfig().skills?.[id]?.enabled !== false }));
+        return json(res, 200, {
+          skills: skillManager.list(context),
+          summary: skillManager.summary(context),
+          capabilities: skillManager.capabilities.list().sort(),
+          uninstalled
+        });
+      }
+
+      if (pathname === '/api/skills/reload' && method === 'POST') {
+        try {
+          const result = await reloadSkills({ reason: 'manual' });
+          const context = skillRuntimeContext();
+          return json(res, 200, {
+            ok: true,
+            loaded: result.loaded.map((r) => r.id),
+            failed: result.failed.map((r) => ({ id: r.id, error: r.error })),
+            pruned: result.pruned || [],
+            skills: skillManager.list(context),
+            summary: skillManager.summary(context),
+            capabilities: skillManager.capabilities.list().sort()
+          });
+        } catch (error) {
+          return json(res, 500, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+
+      if (pathname === '/api/skills/toggle' && method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const id = String(body.id || '').trim();
+        if (!id) return json(res, 400, { ok: false, error: '缺少 id' });
+        const enabled = body.enabled !== false;
+        setSkillEnabled(id, enabled);
+        const context = skillRuntimeContext();
+        try {
+          if (enabled) skillManager.activate(id, context);
+          else skillManager.deactivate(id, context);
+        } catch (error) {
+          log(`[skill] 切换 ${id} 失败：${error?.message ?? error}`);
+        }
+        emit('skills-changed', { at: Date.now(), id });
+        return json(res, 200, {
+          ok: true,
+          skill: skillManager.status(id, context),
+          settings: skillManager.settingsView(id)
+        });
+      }
+
+      if (pathname === '/api/skills/config' && method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const id = String(body.id || '').trim();
+        if (!id) return json(res, 400, { ok: false, error: '缺少 id' });
+        const skill = skillManager.registry?.get?.(id);
+        const allowed = new Set([
+          ...Object.keys(skill?.manifest?.settings || {}),
+          ...Object.keys(skill?.manifest?.configSchema || {})
+        ]);
+        const patch = {};
+        for (const [k, v] of Object.entries(body.settings || {})) {
+          if (!allowed.size || !allowed.has(k)) continue;
+          // 密文字段收到掩码或空串 = 不修改
+          if (v === '******' || (typeof v === 'string' && v.trim() === '' && /key|token|secret|password|cookie/i.test(k))) continue;
+          patch[k] = v;
+        }
+        if (Object.keys(patch).length) setSkillConfig(id, patch);
+        emit('skills-changed', { at: Date.now(), id });
+        return json(res, 200, { ok: true, skill: skillManager.status(id, skillRuntimeContext()), settings: skillManager.settingsView(id) });
+      }
+
+      // 安装：body { filename, dataBase64, type?: 'skill'|'plugin' }
+      if (pathname === '/api/skills/install' && method === 'POST') {
+        try {
+          const body = await readBody(req).catch(() => ({}));
+          const b64 = String(body.dataBase64 || '').replace(/^data:[^,]*,/, '');
+          if (!b64) return json(res, 400, { ok: false, error: '缺少安装包内容（dataBase64）' });
+          const buf = Buffer.from(b64, 'base64');
+          // 类型判定：显式指定 > 按安装包里的清单自动识别（plugin.json = 确定性型）
+          let type = null;
+          if (body.type === 'plugin' || body.type === 'skill') {
+            type = body.type;
+          } else {
+            try {
+              const entries = validateZipStructure(buf);
+              const names = entries.map((e) => e.name);
+              const hasPlugin = names.some((n) => /(^|\/)plugin\.json$/i.test(n));
+              const hasSkill = names.some((n) => /(^|\/)skill\.json$/i.test(n));
+              type = (hasPlugin && !hasSkill) ? 'plugin' : 'skill';
+            } catch {
+              type = 'skill';   // 结构校验会由 unzipToModuleDir 再抛一次，这里只决定目录
+            }
+          }
+          const dirName = await unzipToModuleDir(buf, { root: ROOT, type, preferId: String(body.id || '') });
+          const result = await reloadSkills({ reason: 'install' });
+          return json(res, 200, {
+            ok: true,
+            type,
+            dir: `${type === 'plugin' ? 'plugins' : 'skills'}/${dirName}`,
+            loaded: result.loaded.map((r) => r.id),
+            failed: result.failed.map((r) => ({ id: r.id, error: r.error }))
+          });
+        } catch (error) {
+          return json(res, 400, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+
+      // 卸载：body { id, deleteFiles?: boolean }
+      if (pathname === '/api/skills/uninstall' && method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const id = String(body.id || '').trim();
+        if (!id) return json(res, 400, { ok: false, error: '缺少 id' });
+        const context = skillRuntimeContext();
+        try { unloadSkill(id, context); } catch (error) { log(`[skill] 卸载 ${id} 失败：${error?.message ?? error}`); }
+        const cfgNow = getConfig();
+        if (cfgNow.skills && cfgNow.skills[id]) {
+          const next = { ...cfgNow.skills };
+          delete next[id];
+          updateConfig({ skills: next });
+        }
+        if (body.deleteFiles !== false) {
+          // 只在 skills/ 与 plugins/ 目录下按 manifest id 精确匹配后删除
+          for (const root of [SKILL_DIRS.skills, SKILL_DIRS.plugins]) {
+            let dirs = [];
+            try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch { continue; }
+            for (const name of dirs) {
+              const dir = path.join(root, name);
+              // 清单可能是 skill.json（LLM 型）或 plugin.json（确定性型）
+              for (const manifestName of ['skill.json', 'plugin.json']) {
+                try {
+                  const raw = JSON.parse(fs.readFileSync(path.join(dir, manifestName), 'utf8'));
+                  if (String(raw.id || '') !== id) continue;
+                  fs.rmSync(dir, { recursive: true, force: true });
+                  break;
+                } catch { /* 没有这个清单或不是该条目 */ }
+              }
+            }
+          }
+        }
+        await reloadSkills({ reason: 'uninstall' });
+        emit('skills-changed', { at: Date.now(), id });
+        return json(res, 200, { ok: true });
+      }
+
+      // 工具可用性（UI 排障：为什么这个工具这一轮没给模型）
+      if (pathname === '/api/tools' && method === 'GET') {
+        const context = skillRuntimeContext();
+        const tools = listTools().map((t) => ({
+          id: t.id,
+          name: t.name,
+          category: t.category,
+          description: String(t.description || '').slice(0, 160),
+          skillId: t.skillId || null,
+          builtin: !t.skillId,
+          defaultEnabled: t.defaultEnabled !== false,
+          override: (getConfig().tools?.overrides?.[t.id] ?? null),
+          masterOnly: !!t.masterOnly,
+          tutorOnly: KB_TOOL_NAMES.has(t.id),
+          requiresVision: !!t.requiresVision,
+          requiresSearch: !!t.requiresSearch,
+          availability: getToolAvailability(t.id, {
+            skills: skillManager,
+            toolsCfg: getConfig().tools,
+            visionEnabled: context.visionEnabled,
+            searchEnabled: context.searchEnabled,
+            runtimeContext: context
+          })
+        }));
+        return json(res, 200, {
+          tools,
+          total: tools.length,
+          // 常规可用 = 已启用且不依赖"主人触发/学习模式"这类运行期条件
+          available: tools.filter((t) => t.availability.enabled && !t.masterOnly && !t.tutorOnly).length,
+          conditional: tools.filter((t) => t.masterOnly || t.tutorOnly).length,
+          byCategory: tools.reduce((acc, t) => {
+            const k = t.category || 'system';
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+          }, {})
+        });
+      }
+
+      // 单工具开关：写入 config.tools.overrides[id]（true=强制开，false=强制关，不写=默认）
+      if (pathname === '/api/tools/toggle' && method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const id = String(body.id || '').trim();
+        if (!id) return json(res, 400, { ok: false, error: '缺少 id' });
+        const def = listTools().find((t) => t.id === id);
+        if (!def) return json(res, 404, { ok: false, error: `工具不存在：${id}` });
+        const cfgNow = getConfig();
+        const overrides = { ...(cfgNow.tools?.overrides || {}), [id]: body.enabled !== false };
+        updateConfig({ tools: { ...(cfgNow.tools || {}), overrides } });
+        emit('skills-changed', { at: Date.now(), id });
+        const context = skillRuntimeContext();
+        return json(res, 200, {
+          ok: true,
+          id,
+          availability: getToolAvailability(id, {
+            skills: skillManager,
+            toolsCfg: getConfig().tools,
+            visionEnabled: context.visionEnabled,
+            searchEnabled: context.searchEnabled,
+            runtimeContext: context
+          })
+        });
+      }
+
       if (pathname === '/api/sessions' && method === 'GET') {
         const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 60));
         return json(res, 200, { sessions: sessions.listSummaries(limit) });
@@ -1095,6 +1355,7 @@ export function createApp({ log = console.log } = {}) {
           const { buildToolDefs } = await import('./tools.js');
           const defs = buildToolDefs();
           const GROUP_RULES = [
+            ['扩展（Skill）', /^[a-zA-Z0-9_-]+__/],
             ['消息与互动', /^(send_message|send_sticker|send_image|send_file|send_poke|receive_file|list_stickers|get_sticker_image|sticker_note|collect_sticker)$/],
             ['信息获取', /^(get_recent_messages|get_active_members|get_message_detail|get_message_images|web_search|web_fetch)$/],
             ['记忆', /^(memory_append|memory_query|memory_remove)$/],
@@ -1103,14 +1364,26 @@ export function createApp({ log = console.log } = {}) {
             ['主人专属', /^(dsh_task|teacher_control)$/],
             ['其它', /.*/]
           ];
-          const tools = defs.filter((d) => d && d.name).map((d) => {
+          const capCtx = skillRuntimeContext();
+          const tools = defs.filter((d) => d && (d.id || d.name)).map((d) => {
+            const id = d.id || d.name;
             let group = '其它';
-            for (const [g, re] of GROUP_RULES) { if (re.test(d.name)) { group = g; break; } }
+            for (const [g, re] of GROUP_RULES) { if (re.test(id)) { group = g; break; } }
+            const st = getToolAvailability(id, {
+              skills: skillManager,
+              toolsCfg: getConfig().tools,
+              visionEnabled: capCtx.visionEnabled,
+              searchEnabled: capCtx.searchEnabled,
+              runtimeContext: capCtx
+            });
             return {
-              name: d.name,
+              name: id,
               group,
+              enabled: st.enabled,
+              reason: st.reason || '',
               description: String(d.description || '').slice(0, 200),
               masterOnly: !!d.masterOnly,
+              tutorOnly: KB_TOOL_NAMES.has(id),
               params: Object.keys(d.parameters?.properties || {})
             };
           });
@@ -1135,7 +1408,9 @@ export function createApp({ log = console.log } = {}) {
           const searchProvider = String(cfg.webSearch?.provider || 'auto');
           return json(res, 200, {
             tools,
-            total: tools.length,
+            // total = 常规可用工具数（Skill/开关/vision/搜索都会影响）；注册数另给
+            total: tools.filter((t) => t.enabled && !t.masterOnly && !t.tutorOnly).length,
+            registered: tools.length,
             features: {
               schedule,
               scheduleNotify: {
@@ -1339,7 +1614,7 @@ export function createApp({ log = console.log } = {}) {
   async function listenOn(port) {
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => {
+      server.listen(port, process.env.QQ_AGENT_HOST || '127.0.0.1', () => {
         server.off('error', reject);
         resolve(port); // 必须把实际端口传回去，Electron 壳要用它加载页面
       });
@@ -1391,6 +1666,17 @@ export function createApp({ log = console.log } = {}) {
       onebot.httpToken = String(c.snowluma?.httpAccessToken || c.snowluma?.accessToken || '');
     }
     await onebot.connect();
+
+    // 扩展加载：skills/（LLM 型，注册工具）+ plugins/（确定性型，能力/钩子）
+    try {
+      await reloadSkills({ reason: 'boot' });
+      const s = skillManager.summary(skillRuntimeContext());
+      log(`扩展已加载：${s.total ?? 0} 个（启用 ${s.enabled ?? 0}）`
+        + (s.failed ? `，失败 ${s.failed}` : ''));
+    } catch (error) {
+      log(`[skill] 加载失败：${error?.message ?? error}`);
+    }
+
     if (getConfig().proactive?.enabled) orchestrator.startProactiveLoop();
     orchestrator.startDshWatcher(); // DSH 任务完成汇报 watcher
     if (getConfig().scheduleNotify?.enabled !== false) scheduleNotify.start();   // 每晚课程播报调度器
@@ -1402,6 +1688,8 @@ export function createApp({ log = console.log } = {}) {
   }
 
   async function stop() {
+    try { pluginWatcher?.close?.(); } catch { /* ignore */ }
+    pluginWatcher = null;
     onebotHealth.stop();
     qrGuard.stop();
     scheduleNotify.stop();
@@ -1412,5 +1700,5 @@ export function createApp({ log = console.log } = {}) {
     try { snowlumaProc?.kill(); } catch { /* ignore */ }
   }
 
-  return { server, onebot, store, memory, stickers, sender, sessions, orchestrator, scheduleNotify, start, stop, emit, getConfig, updateConfig, launchSnowluma, stopSnowluma, snowlumaStatus, onebotHealth, qrGuard };
+  return { server, onebot, store, memory, stickers, sender, sessions, orchestrator, scheduleNotify, start, stop, emit, getConfig, updateConfig, launchSnowluma, stopSnowluma, snowlumaStatus, onebotHealth, qrGuard, reloadSkills, skillManager };
 }

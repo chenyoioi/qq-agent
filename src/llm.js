@@ -1,6 +1,7 @@
 // OpenAI 兼容 Chat Completions 客户端（非流式；QQ 本身不支持流式，没必要）。
 // 支持工具调用、usage 统计、可自选模型 —— 这是与 DSH 解耦后的"大脑"接口。
 import { getConfig } from './config.js';
+import { skillManager } from './skills/manager.js';
 
 function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}${path}`;
@@ -14,7 +15,7 @@ function authHeaders(apiKey) {
  * 单次对话请求。messages 为 OpenAI 格式；tools 为 OpenAI function 格式（可为空）。
  * 返回 { message, usage, raw }；usage 形如 { prompt_tokens, completion_tokens, total_tokens }。
  */
-export async function chatCompletion({ messages, tools = null, toolChoice = 'auto', temperature = null, signal = null }) {
+export async function chatCompletion({ messages, tools = null, toolChoice = 'auto', temperature = null, signal = null, ctx = null }) {
   const cfg = getConfig().api;
   const body = {
     model: cfg.model,
@@ -28,6 +29,18 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   const temp = temperature === null ? (cfg.temperature ?? 0.8) : temperature;
   if (temp !== null && temp !== undefined && Number.isFinite(Number(temp))) body.temperature = Number(temp);
 
+  // 扩展提供的请求参数转换（llm.request-params）：插件可按会话改写 tools/参数。
+  // 串行执行，后者能看到前者的输出；单个插件抛错只记录，不影响请求。
+  let finalBody = body;
+  for (const fn of skillManager.getRequestTransforms(ctx || {})) {
+    try {
+      const next = await fn({ body: finalBody, api: cfg, model: cfg.model, messages, tools, temperature: temp, context: ctx || {} });
+      if (next && typeof next === 'object') finalBody = next.body || next;
+    } catch (error) {
+      skillManager.recordError('llm.request-params', error);
+    }
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error('请求超时')), Math.max(5000, Number(cfg.timeoutMs) || 180000));
   if (signal) {
@@ -40,7 +53,7 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     res = await fetch(joinUrl(cfg.baseUrl, '/chat/completions'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders(cfg.apiKey) },
-      body: JSON.stringify(body),
+      body: JSON.stringify(finalBody),
       signal: controller.signal
     });
   } catch (error) {
@@ -57,13 +70,42 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   const data = await res.json().catch(() => { throw new Error('模型 API 返回了无法解析的 JSON'); });
   const choice = data?.choices?.[0];
   if (!choice) throw new Error(`模型 API 响应缺少 choices：${JSON.stringify(data).slice(0, 300)}`);
-  return {
+  const result = {
     message: choice.message ?? {},
     finishReason: choice.finish_reason ?? null,
     usage: data.usage ?? null,
     model: data.model ?? cfg.model,
     raw: data
   };
+
+  // 扩展响应/用量转换（llm.response / llm.usage）：错误隔离，失败不影响主流程
+  if (ctx) {
+    for (const fn of skillManager.getResponseTransforms(ctx)) {
+      try {
+        const next = await fn({ result, ...ctx });
+        if (next && typeof next === 'object' && next.result) Object.assign(result, next.result);
+      } catch (error) {
+        skillManager.recordError('llm.response', error);
+      }
+    }
+    const extra = {};
+    let hasExtra = false;
+    for (const fn of skillManager.getUsageTransforms(ctx)) {
+      try {
+        const add = await fn({ result, usage: result.usage, ...ctx });
+        if (add && typeof add === 'object') {
+          for (const [k, v] of Object.entries(add)) {
+            const n = Number(v) || 0;
+            if (n) { extra[k] = (extra[k] || 0) + n; hasExtra = true; }
+          }
+        }
+      } catch (error) {
+        skillManager.recordError('llm.usage', error);
+      }
+    }
+    if (hasExtra) result.extraUsage = extra;
+  }
+  return result;
 }
 
 /** 获取模型列表（GET /models）。返回 [{ id }]；失败抛错。 */

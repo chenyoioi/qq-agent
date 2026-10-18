@@ -1,0 +1,17 @@
+node_modules
+data/config.json
+data/messages
+data/sessions
+data/memory
+data/inbox
+data/schedule
+data/knowledge
+data/usage-today.json
+data/napcat-qrcode.png
+data/whale-memes
+data/account.json
+.git
+.env
+*.log
+Dockerfile
+docker-compose.yml

@@ -1,0 +1,40 @@
+# 两个容器：QQ 协议端（NapCat）+ 控制台（qq-agent）
+#
+#   docker compose up -d --build
+#   控制台：http://127.0.0.1:3210      NapCat WebUI：http://127.0.0.1:6099
+#
+# ⚠️ OneBot 端口（3000/3001）只在容器网络内，不映射到宿主机。
+#    首次启动后把 data/config.json 里的地址改成服务名：
+#      snowluma.wsUrl   = ws://napcat:3001
+#      snowluma.httpUrl = http://napcat:3000
+#    （或者直接用 NapCat WebUI 的配置项改，再重启 qq-agent 容器）
+services:
+  qq-agent:
+    build: .
+    container_name: qq-agent
+    restart: unless-stopped
+    ports:
+      - "3210:3210"
+    environment:
+      - TZ=Asia/Shanghai
+      - QQ_AGENT_HOST=0.0.0.0
+    volumes:
+      - ./data:/app/data
+      - ./skills:/app/skills
+      - ./plugins:/app/plugins
+    depends_on:
+      - napcat
+
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: unless-stopped
+    environment:
+      - NAPCAT_UID=${UID:-1000}
+      - NAPCAT_GID=${GID:-1000}
+      - TZ=Asia/Shanghai
+    ports:
+      - "6099:6099"
+    volumes:
+      - ./napcat/config:/app/napcat/config
+      - ./napcat/qq:/app/.config/QQ

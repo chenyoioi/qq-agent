@@ -12,6 +12,7 @@ const state = {
   chats: [],
   currentChatKey: null,
   chatMessages: [],
+  tools: [],
   config: null,
   personaTemplates: {},
   // 覆盖人设前的临时备份（仅本页面会话内有效，刷新即失效）
@@ -177,6 +178,236 @@ async function resumePause({ skipBacklog = false } = {}) {
   }
 }
 
+// ── 技能（扩展）页 ──────────────────────────────────────────────
+// 数据全部来自 /api/skills 与 /api/tools；开关写 config.skills[id].enabled，
+// 与后端唯一开关来源一致（UI 不另存状态）。
+let skillsBound = false;
+
+async function loadSkillsPage() {
+  const panel = $('#skills-panel');
+  if (!panel) return;
+  if (!panel.dataset.ready) panel.innerHTML = '<div class="empty-hint">正在读取扩展列表…</div>';
+  try {
+    const [data, tools] = await Promise.all([
+      api('/api/skills'),
+      api('/api/tools').catch(() => ({ total: 0, tools: [] }))
+    ]);
+    renderSkillsPage(data, tools);
+  } catch (e) {
+    panel.innerHTML = `<div class="empty-hint">加载失败：${esc(e.message)}</div>`;
+  }
+  if (!skillsBound) {
+    skillsBound = true;
+    panel.dataset.ready = '1';
+    panel.addEventListener('click', onSkillsClick);
+    panel.addEventListener('change', onSkillsChange);
+    panel.addEventListener('input', onSkillsChange);
+  }
+}
+
+function renderSkillsPage(data, toolsData) {
+  const panel = $('#skills-panel');
+  const list = data.skills || [];
+  const sum = data.summary || {};
+  const cards = list.map((sk) => {
+    const kind = sk.kind === 'plugin' ? '确定性型' : (sk.kind === 'skill' ? 'LLM 型' : '扩展');
+    const state = sk.active
+      ? '<span class="cap-ok">✅ 启用</span>'
+      : (sk.loadError ? `<span class="cap-warn">❌ ${esc(sk.loadError)}</span>` : '<span class="cap-off">⏸ 停用</span>');
+    const toolList = (sk.toolIds || []).length
+      ? sk.toolIds.map((t) => `<code>${esc(t)}</code>`).join('、')
+      : '<span class="muted">无（确定性型不注册工具）</span>';
+    const caps = (sk.capabilities || []).length
+      ? sk.capabilities.map((c) => `<code>${esc(c)}</code>`).join('、')
+      : '<span class="muted">—</span>';
+    const schema = sk.configSchema || {};
+    const fields = Object.entries(schema).map(([k, spec]) => {
+      const val = (sk.settings && sk.settings[k] !== undefined) ? sk.settings[k] : (spec?.default ?? '');
+      const label = esc(spec?.label || k);
+      if (spec?.type === 'boolean') {
+        return `<label class="skill-field"><input type="checkbox" data-key="${esc(k)}" ${val ? 'checked' : ''}> ${label}</label>`;
+      }
+      const type = spec?.type === 'number' ? 'number' : 'text';
+      return `<label class="skill-field">${label}<input type="${type}" data-key="${esc(k)}" value="${esc(String(val))}"></label>`;
+    }).join('');
+    return `<div class="skill-card" data-id="${esc(sk.id)}">
+      <div class="skill-card-head">
+        <div><b>${esc(sk.name || sk.id)}</b> <span class="skill-kind">${kind}</span> <span class="muted">v${esc(sk.version || '')}</span></div>
+        <div>${state}</div>
+      </div>
+      <div class="skill-desc">${esc(sk.description || '')}</div>
+      <div class="skill-meta">工具：${toolList}</div>
+      <div class="skill-meta">能力：${caps}</div>
+      ${fields ? `<div class="skill-settings">${fields}<button class="btn-mini" data-act="save">保存设置</button></div>` : ''}
+      <div class="skill-actions">
+        <label><input type="checkbox" data-act="toggle" ${sk.active ? 'checked' : ''}> 启用</label>
+        <button class="btn-mini" data-act="uninstall">卸载</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="skills-head">
+      <div>
+        共 <b>${sum.total ?? list.length}</b> 个扩展 · 启用 <b>${sum.active ?? 0}</b> · 停用 <b>${sum.disabled ?? 0}</b>
+        · 异常 <b>${sum.broken ?? 0}</b> · 工具 常规可用 <b>${toolsData.available ?? '?'}</b> / 注册 <b>${toolsData.total ?? 0}</b>
+      </div>
+      <div><button class="btn-mini" data-act="reload">重新扫描磁盘</button>
+        <button class="btn-mini" data-act="install">安装扩展（zip）</button>
+        <input type="file" id="skill-zip" accept=".zip" hidden></div>
+    </div>
+    <div class="skills-hint muted">
+      <b>skills/</b>（LLM 型）注册工具，模型自己判断何时用；<b>plugins/</b>（确定性型）提供能力/钩子，核心命中即执行。
+      每个扩展 = 一个目录 + 清单（skill.json / plugin.json）+ index.js，放进对应目录即热重载生效。
+    </div>
+    <div class="skills-list">${cards || '<div class="empty-hint">还没有安装任何扩展</div>'}</div>
+    ${(data.uninstalled || []).length ? `<div class="skills-hint muted">配置里还有已删除的扩展记录：${data.uninstalled.map((u) => esc(u.id)).join('、')}</div>` : ''}
+    <details class="tools-box" open>
+      <summary>工具清单（本轮可用 <b>${toolsData.available ?? '?'}</b> / 注册 <b>${toolsData.total ?? 0}</b> 个）</summary>
+      <div class="tools-filter">
+        <input id="tool-search" placeholder="搜索工具名 / 描述 / 分类" value="${esc(toolSearch)}">
+        <label><input type="checkbox" id="tool-only-unavailable" ${toolOnlyUnavailable ? 'checked' : ''}> 只看不可用</label>
+      </div>
+      <div id="tool-rows" class="tools-table"></div>
+    </details>
+  `;
+  state.tools = toolsData.tools || [];
+  renderToolRows();
+}
+
+// ── 工具清单渲染（客户端过滤，不重新请求）──
+let toolSearch = '';
+let toolOnlyUnavailable = false;
+
+function toolRowMarkup(t) {
+  const a = t.availability || {};
+  const checked = t.override !== false;
+  const status = !a.enabled
+    ? `<span class="cap-warn" title="${esc(a.reason || '')}">不可用</span><div class="tool-reason">${esc(a.reason || '')}</div>`
+    : (t.masterOnly
+      ? '<span class="cap-off">仅主人</span>'
+      : (t.tutorOnly ? '<span class="cap-off">仅学习模式</span>' : '<span class="cap-ok">可用</span>'));
+  return `<div class="tool-row">
+    <div class="tool-main"><code>${esc(t.id)}</code><div class="tool-desc muted">${esc(t.description || '')}</div></div>
+    <div class="tool-src">${t.builtin ? '内置' : '扩展 ' + esc(t.skillId || '')}</div>
+    <div class="tool-cat">${esc(t.category || '')}</div>
+    <div class="tool-state">${status}</div>
+    <label class="tool-toggle"><input type="checkbox" data-act="tool-toggle" data-id="${esc(t.id)}" ${checked ? 'checked' : ''}></label>
+  </div>`;
+}
+
+function renderToolRows() {
+  const box = $('#tool-rows');
+  if (!box) return;
+  const q = toolSearch.trim().toLowerCase();
+  const rows = (state.tools || []).filter((t) => {
+    if (toolOnlyUnavailable && t.availability?.enabled) return false;
+    if (!q) return true;
+    return (t.id + ' ' + (t.description || '') + ' ' + (t.category || '')).toLowerCase().includes(q);
+  }).map(toolRowMarkup).join('');
+  box.innerHTML = `<div class="tool-row tool-head"><div>工具</div><div>来源</div><div>分类</div><div>状态</div><div>启用</div></div>`
+    + (rows || '<div class="empty-hint">没有匹配的工具</div>');
+}
+
+async function onSkillsChange(ev) {
+  const card = ev.target.closest('.skill-card');
+  // 安装包选择：读成 base64 交给后端校验+解压
+  if (ev.target.id === 'skill-zip') {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    try {
+      const b64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+        reader.onerror = () => reject(new Error('读取文件失败'));
+        reader.readAsDataURL(file);
+      });
+      const r = await api('/api/skills/install', {
+        method: 'POST',
+        body: JSON.stringify({ filename: file.name, dataBase64: b64 })
+      });
+      alert(r.ok
+        ? `安装成功（${r.type === 'plugin' ? '确定性型插件' : 'LLM 型技能'}）：${r.dir}\n加载：${(r.loaded || []).join(', ') || '无'}`
+        : '安装失败');
+      await loadSkillsPage();
+    } catch (e) {
+      alert('安装失败：' + e.message);
+    } finally {
+      ev.target.value = '';
+    }
+    return;
+  }
+  // 工具清单：搜索 / 只看不可用 / 单项开关
+  if (ev.target.id === 'tool-search') { toolSearch = ev.target.value || ''; renderToolRows(); return; }
+  if (ev.target.id === 'tool-only-unavailable') { toolOnlyUnavailable = !!ev.target.checked; renderToolRows(); return; }
+  if (ev.target.dataset.act === 'tool-toggle') {
+    if (ev.type !== 'change') return;           // checkbox 同时触发 input+change，只处理一次
+    const toolId = ev.target.dataset.id;
+    try {
+      await api('/api/tools/toggle', {
+        method: 'POST',
+        body: JSON.stringify({ id: toolId, enabled: ev.target.checked })
+      });
+      await loadSkillsPage();
+    } catch (e) {
+      alert('切换工具失败：' + e.message);
+      await loadSkillsPage();
+    }
+    return;
+  }
+  if (!card) return;
+  if (ev.target.dataset.act !== 'toggle') return;
+  const id = card.dataset.id;
+  try {
+    await api('/api/skills/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ id, enabled: ev.target.checked })
+    });
+    await loadSkillsPage();
+  } catch (e) {
+    alert('切换失败：' + e.message);
+    await loadSkillsPage();
+  }
+}
+
+async function onSkillsClick(ev) {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const act = btn.dataset.act;
+  const card = btn.closest('.skill-card');
+  const id = card?.dataset.id;
+  try {
+    if (act === 'reload') {
+      await api('/api/skills/reload', { method: 'POST' });
+      await loadSkillsPage();
+      return;
+    }
+    if (act === 'install') {
+      const input = $('#skill-zip');
+      if (input) input.click();
+      return;
+    }
+    if (act === 'uninstall') {
+      if (!confirm(`卸载 ${id} 并删除目录？`)) return;
+      await api('/api/skills/uninstall', { method: 'POST', body: JSON.stringify({ id }) });
+      await loadSkillsPage();
+      return;
+    }
+    if (act === 'save') {
+      const settings = {};
+      $$('[data-key]', card).forEach((inp) => {
+        settings[inp.dataset.key] = inp.type === 'checkbox'
+          ? inp.checked
+          : (inp.type === 'number' ? Number(inp.value) : inp.value);
+      });
+      await api('/api/skills/config', { method: 'POST', body: JSON.stringify({ id, settings }) });
+      await loadSkillsPage();
+    }
+  } catch (e) {
+    alert('操作失败：' + e.message);
+  }
+}
+
 function switchTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
@@ -184,6 +415,7 @@ function switchTab(name) {
   if (name === 'sessions') loadSessions();
   if (name === 'chats') loadChats();
   if (name === 'snowluma') loadSnowlumaPage();
+  if (name === 'skills') loadSkillsPage();
   if (name === 'settings') loadSettings();
 }
 
@@ -266,6 +498,8 @@ function connectSSE() {
   // 账号健康事件：掉线/恢复时立即刷新界面，不必等 15 秒轮询
   es.addEventListener('onebot-health', () => { refreshStatus(); if (state.tab === 'snowluma') loadSnowlumaPage({ quiet: true }); });
   es.addEventListener('snowluma-status', () => { refreshStatus(); if (state.tab === 'snowluma') loadSnowlumaPage({ quiet: true }); });
+  // 扩展热重载/开关变化：正在看技能页时立即刷新
+  es.addEventListener('skills-changed', () => { if (state.tab === 'skills') loadSkillsPage(); });
   es.addEventListener('snowluma-log', (ev) => {
     const d = JSON.parse(ev.data);
     if (!appReady && d?.text) {
@@ -1585,6 +1819,8 @@ function renderCapabilitiesSection(c) {
               <div class="cap-tool-name">
                 <code>${esc(t.name)}</code>
                 ${t.masterOnly ? '<span class="cap-badge">主人专属</span>' : ''}
+                ${t.tutorOnly ? '<span class="cap-badge">学习模式</span>' : ''}
+                ${t.enabled === false ? `<span class="cap-badge cap-badge-off" title="${esc(t.reason || '')}">不可用</span>` : ''}
               </div>
               <div class="cap-tool-desc">${esc(String(t.description || '').slice(0, 110))}${(t.description || '').length > 110 ? '…' : ''}</div>
               ${t.params && t.params.length ? `<div class="cap-tool-params">参数：<code>${t.params.map(esc).join('</code>、<code>')}</code></div>` : ''}
@@ -1606,7 +1842,8 @@ function renderCapabilitiesSection(c) {
   return `
     <h3 id="settings-caps">能力总览</h3>
     <div class="hint" style="margin-bottom:12px">
-      机器人当前具备 <b>${cap.total || tools.length}</b> 个工具。以下清单由服务端实时生成，与运行中的代码一致。
+      机器人共注册 <b>${cap.registered || tools.length}</b> 个工具，常规可用 <b>${cap.total ?? tools.length}</b> 个
+      （其余为「仅主人」「仅学习模式」或当前被关闭）。以下清单由服务端实时生成，与运行中的代码一致。
     </div>
 
     <div class="cap-grid">
@@ -2544,6 +2781,7 @@ $$('.tab').forEach((tab) => {
     if (state.tab === 'sessions') loadSessions();
     if (state.tab === 'chats') loadChats();
     if (state.tab === 'snowluma') loadSnowlumaPage();
+    if (state.tab === 'skills') loadSkillsPage();
     if (state.tab === 'settings') loadSettings();
   });
 });

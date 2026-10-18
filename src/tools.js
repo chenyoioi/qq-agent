@@ -5,6 +5,7 @@
 // 工具命名去掉了 qq_ 前缀（更短，省 token）。
 import path from 'node:path';
 import { getConfig, ROOT } from './config.js';
+import { registerTool, listTools } from './tool-registry.js';
 import { normalizeMessageList, unquoteJsonString } from './util.js';
 import { formatStickerList } from './stickers.js';
 import { validateImageUrl, safeFetchBinary } from './safe-fetch.js';
@@ -93,7 +94,7 @@ function imageParts(text, dataUrls) {
  *   emit  (事件上报给 UI/日志)
  * }
  */
-export function buildToolDefs() {
+function builtinToolDefs() {
   return [...KB_TOOLS,
     {
       name: 'send_message',
@@ -841,12 +842,68 @@ export function buildToolDefs() {
   ];
 }
 
+/** 内置工具的元数据（注册进 tool-registry 时用；Skill 工具由加载器自行声明）。 */
+const BUILTIN_META = {
+  messaging: ['send_message', 'send_sticker', 'send_image', 'send_poke'],
+  file: ['receive_file', 'send_file'],
+  schedule: ['schedule_task', 'schedule_query'],
+  sticker: ['list_stickers', 'get_sticker_image', 'sticker_note', 'collect_sticker'],
+  query: ['get_recent_messages', 'get_active_members', 'get_message_detail', 'get_message_images'],
+  memory: ['memory_append', 'memory_query', 'memory_remove', 'report_feedback'],
+  web: ['web_search', 'web_fetch'],
+  knowledge: ['kb_overview', 'kb_questions', 'kb_textbook', 'kb_progress', 'study_log', 'study_plan'],
+  system: ['finish', 'dsh_task', 'teacher_control']
+};
+const BUILTIN_CATEGORY = (() => {
+  const m = new Map();
+  for (const [cat, ids] of Object.entries(BUILTIN_META)) for (const id of ids) m.set(id, cat);
+  return m;
+})();
+const VISION_TOOLS = new Set(['get_message_images', 'get_sticker_image']);
+const SEARCH_TOOLS = new Set(['web_search', 'web_fetch']);
+
+let builtinsRegistered = false;
+
+/** 把内置工具注册进 registry（幂等）。返回注册后的工具定义数组。 */
+function registerBuiltins() {
+  if (!builtinsRegistered) {
+    builtinsRegistered = true;
+    for (const def of builtinToolDefs()) {
+      const id = def.name;
+      registerTool({
+        id,
+        name: id,
+        description: def.description,
+        parameters: def.parameters,
+        execute: def.execute,
+        category: BUILTIN_CATEGORY.get(id) || 'system',
+        requiresVision: VISION_TOOLS.has(id),
+        requiresSearch: SEARCH_TOOLS.has(id),
+        masterOnly: def.masterOnly === true,
+        skillId: null
+      });
+    }
+  }
+  return listTools();
+}
+
+/**
+ * 构建本次运行可用的工具定义。
+ *
+ * 现在与扩展系统统一口径：内置工具 + Skill 注册的工具都在 tool-registry 里，
+ * 这里只负责返回全量，具体"这一轮哪些可用"由 orchestrator 用
+ * getToolAvailability() 过滤（唯一口径，避免两处各判一半）。
+ */
+export function buildToolDefs() {
+  return registerBuiltins();
+}
+
 /** 转成 OpenAI tools 参数格式。 */
 export function toOpenAiTools(defs) {
   return defs.map((d) => ({
     type: 'function',
     function: {
-      name: d.name,
+      name: d.id || d.name,
       description: d.description,
       parameters: d.parameters
     }
@@ -855,7 +912,7 @@ export function toOpenAiTools(defs) {
 
 /** 找到并执行一个工具调用。返回 { content, isError }，content 为 string 或 parts 数组。 */
 export async function executeTool(defs, ctx, name, argsJson) {
-  const def = defs.find((d) => d.name === name);
+  const def = defs.find((d) => (d.id || d.name) === name);
   if (!def) return { content: `错误：未知工具 ${name}`, isError: true };
   let args = {};
   const raw = argsJson ?? '{}';

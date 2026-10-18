@@ -13,6 +13,8 @@ import { sleep, randInt, createEventBus, todayKey } from './util.js';
 import { buildSystemPrompt, buildUserPrompt } from './prompt.js';
 import { chatCompletion, addUsage, estimateCost } from './llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool, KB_TOOL_NAMES } from './tools.js';
+import { getToolAvailability } from './tool-registry.js';
+import { skillManager } from './skills/manager.js';
 import { looksLikeMonologue, looksSpokenToUser } from './monologue-guard.js';
 import { modelVisionVerdict } from './vision-scan.js';
 
@@ -353,6 +355,25 @@ export class Orchestrator {
       }
     }
 
+    // ── Skill 上下文与 before-context 钩子 ──
+    // 视觉/搜索判定提前到这里：Skill 可用性判断、提示词片段都要用到。
+    const visionEnabled = cfg.api.vision !== false
+      && modelVisionVerdict(cfg.api.provider, cfg.api.model) !== 'no-vision';
+    const searchEnabled = cfg.webSearch?.enabled !== false;
+    const skillContext = {
+      chatKey, kind, chatId, chatName,
+      model: cfg.api.model, provider: cfg.api.provider,
+      visionEnabled, searchEnabled, proactive,
+      sessionId: session.id
+    };
+    try {
+      await skillManager.runHook('before-context', {
+        ...skillContext, triggerEntries, store: this.store, memory: this.memory
+      });
+    } catch (error) {
+      skillManager.recordError('before-context', error);
+    }
+
     // 组装提示词（无 LLM 历史）
     const systemPrompt = buildSystemPrompt({ persona });
     const userPrompt = buildUserPrompt({
@@ -374,9 +395,19 @@ export class Orchestrator {
       proactive
     });
 
+    // Skill 提示词片段（manifest 静态段 + promptSections 动态段）。
+    // 只追加、不覆盖核心规则 —— 安全规则与工具协议永远由 prompt.js 独占。
+    const skillSections = skillManager.getPromptSections({ ...skillContext, persona, mode: ident.mode });
+    const skillPrompt = skillSections.length
+      ? '\n\n【可用技能】\n' + skillSections
+        .map((s) => (s.title ? `## ${s.title}\n${String(s.content).trim()}` : String(s.content).trim()))
+        .join('\n\n')
+      : '';
+    const fullUserPrompt = userPrompt + skillPrompt;
+
     session.systemPrompt = systemPrompt;
-    session.userPrompt = userPrompt;
-    session.promptChars = systemPrompt.length + userPrompt.length;
+    session.userPrompt = fullUserPrompt;
+    session.promptChars = systemPrompt.length + fullUserPrompt.length;
     session.model = cfg.api.model;
     session.chatName = chatName;
     this.sessions.update(session.id);
@@ -385,28 +416,45 @@ export class Orchestrator {
     const messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: proactive
-        ? `${userPrompt}\n\n【本次唤醒】（主动机会）群里已经安静了一会儿。你可以主动抛一个自然的话题（像随口说的，不要像播报），也可以判断没必要说话就安静结束。`
-        : userPrompt }
+        ? `${fullUserPrompt}\n\n【本次唤醒】（主动机会）群里已经安静了一会儿。你可以主动抛一个自然的话题（像随口说的，不要像播报），也可以判断没必要说话就安静结束。`
+        : fullUserPrompt }
     ];
 
-    // 工具集按配置过滤：无视觉模型 → 移除看图工具；搜索关闭 → 移除联网工具
-    // 视觉判定 = 全局开关 && 选中模型未被探测为"明确不支持图片"（未探测/unknown 时保持开关行为）
-    const visionEnabled = cfg.api.vision !== false
-      && modelVisionVerdict(cfg.api.provider, cfg.api.model) !== 'no-vision';
-    // 主人判断：私聊（master QQ）或触发消息来自主人（在工具过滤前计算）
+    // Skill 可以加工将要发给模型的消息（原地修改，如补充知识片段）
+    try {
+      await skillManager.runHook('before-llm-messages', { ...skillContext, messages, persona, mode: ident.mode });
+    } catch (error) {
+      skillManager.recordError('before-llm-messages', error);
+    }
+
+    // 工具集过滤：唯一口径 —— 全部交给 getToolAvailability()，
+    // 内置工具与 Skill 工具一视同仁（Skill 开关 / 能力依赖 / vision / 搜索 / 分类都在里面判）。
+    // 主人专属与学习模式是这套分支特有的身份规则，留在这里做二次筛选。
     const MASTER_QQ = String(getConfig().persona?.masterQQ || '123456789');
     const triggerSender = (triggerEntries[0] && (triggerEntries[0].senderId || '')) || '';
     const isMaster = kind === 'private' ? String(chatId) === MASTER_QQ : String(triggerSender) === MASTER_QQ;
-    const searchEnabled = cfg.webSearch?.enabled !== false;
-    const toolDefs = this.toolDefs.filter((d) => {
-      if (!visionEnabled && (d.name === 'get_message_images' || d.name === 'get_sticker_image')) return false;
-      if (!searchEnabled && (d.name === 'web_search' || d.name === 'web_fetch')) return false;
-      // 主人专属工具：仅主人触发时挂载（群友/他人触发时模型看不到这些工具）
+    const availability = new Map();
+    const toolDefs = buildToolDefs().filter((d) => {
+      const id = d.id || d.name;
+      const st = getToolAvailability(id, {
+        skills: skillManager,
+        toolsCfg: cfg.tools,
+        visionEnabled,
+        searchEnabled,
+        runtimeContext: skillContext
+      });
+      availability.set(id, st);
+      if (!st.enabled) return false;
+      // 主人专属工具：仅主人触发时挂载（群友/他人触发时模型看不到）
       if (d.masterOnly && !isMaster) return false;
-      // 知识库工具：仅在「学习模式」身份下挂载（日常身份不暴露教学工具，省 token 防误用）
-      if (KB_TOOL_NAMES.has(d.name) && ident.mode !== 'tutor') return false;
+      // 知识库工具：仅在「学习模式」身份下挂载
+      if (KB_TOOL_NAMES.has(id) && ident.mode !== 'tutor') return false;
       return true;
     });
+    // 排障：本次因为什么少了哪些工具（会话详情可见）
+    session.excludedTools = [...availability.entries()]
+      .filter(([, st]) => !st.enabled)
+      .map(([id, st]) => ({ id, code: st.code, reason: st.reason }));
     const openAiTools = toOpenAiTools(toolDefs);
 
     const ctx = {
@@ -429,9 +477,11 @@ export class Orchestrator {
 
     const maxRounds = Math.max(1, Number(cfg.api.maxRounds) || 12);
     let finish = false;
+    let lastResponse = null;
     for (let round = 0; round < maxRounds && !finish; round++) {
       if (this.aborted) { this.sessions.finish(session.id, 'aborted'); return; }
-      const response = await chatCompletion({ messages, tools: openAiTools });
+      const response = await chatCompletion({ messages, tools: openAiTools, ctx });
+      lastResponse = response;
       session.model = response.model || session.model;
       addUsage(session.usage, response.usage);
       session.usage.calls += 1;
@@ -553,7 +603,26 @@ export class Orchestrator {
       for (const call of toolCalls) {
         const name = call?.function?.name ?? '';
         const argsRaw = call?.function?.arguments ?? '{}';
-        const result = await executeTool(toolDefs, ctx, name, argsRaw);
+        // before-tool 可否决一次调用（返回 {block:true, reason}），用于 Skill 运行期守卫
+        let blocked = null;
+        try {
+          const hookResults = await skillManager.runHook('before-tool', {
+            ...skillContext, toolName: name, argsRaw, session
+          });
+          blocked = hookResults.map((r) => r.value).find((v) => v && v.block) || null;
+        } catch (error) {
+          skillManager.recordError('before-tool', error);
+        }
+        const result = blocked
+          ? { content: `错误：${blocked.reason || '该工具调用被 Skill 拒绝'}`, isError: true }
+          : await executeTool(toolDefs, ctx, name, argsRaw);
+        try {
+          await skillManager.runHook('after-tool', {
+            ...skillContext, toolName: name, argsRaw, result, session
+          });
+        } catch (error) {
+          skillManager.recordError('after-tool', error);
+        }
         // 工具结果：文本走 tool 消息；图片（parts 数组）不能塞进 tool 消息——
         // 很多 OpenAI 兼容端点不接受。做法：tool 消息只带文本，图片随后以 user 消息补发
         // （[{type:'text'},{type:'image_url'}]），这是兼容面最广的视觉输入方式。
@@ -632,7 +701,7 @@ export class Orchestrator {
               { role: 'user', content: '【系统提醒】你刚才收到主人的私聊消息，但没有给出任何回复就结束了。私聊规则：主人私聊你时必须回复，不能不吭声。请立即补上回复：如果刚才在查资料/思考，现在把结论发给主人（用 send_message）；如果没什么可说的，也至少要回一句简短的回应（比如"收到~刚在查，马上给你说"）。' }
             ];
             const { chatCompletion } = await import('./llm.js');
-            const resp = await chatCompletion({ messages: retryMsg, temperature: 0.6 });
+            const resp = await chatCompletion({ messages: retryMsg, temperature: 0.6, ctx });
             const retryText = String(resp?.message?.content || '').trim();
             if (retryText) {
               const cleaned = retryText.replace(/<\/?[a-zA-Z][^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -651,6 +720,15 @@ export class Orchestrator {
       }
     }
 
+
+    // after-response：Skill 可以在会话结束时做收尾（记录、统计、清理）
+    try {
+      await skillManager.runHook('after-response', {
+        ...skillContext, status, sent: session.sent, usage: session.usage, session, response: lastResponse
+      });
+    } catch (error) {
+      skillManager.recordError('after-response', error);
+    }
 
     this.sessions.finish(session.id, status);
     this.emit('session-end', {

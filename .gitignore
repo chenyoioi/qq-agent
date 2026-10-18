@@ -42,3 +42,9 @@ Thumbs.db
 dist/
 build/
 
+
+# 本次新增的运行期产物（分发时不要带）
+data/napcat-qrcode.png
+data/whale-memes/
+data/account.json
+data/knowledge/

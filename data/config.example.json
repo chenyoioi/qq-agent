@@ -103,5 +103,14 @@
     "tokenFile": "",
     "tokenEnv": "ACCOUNTS_BRIDGE_TOKEN"
   },
-  "modelVision": {}
+  "modelVision": {},
+  "skills": {},
+  "tools": {
+    "enabled": true,
+    "categories": {},
+    "overrides": {}
+  },
+  "extensions": {
+    "hotReload": true
+  }
 }
