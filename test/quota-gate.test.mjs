@@ -27,7 +27,10 @@ fs.writeFileSync(path.join(DATA_DIR, 'quota-guard', 'ledger.json'), JSON.stringi
   version: 1,
   users: {
     '111': { dayKey: today, used: 900, spent: 900, name: '超额的人' },
-    '222': { dayKey: today, used: 10, spent: 10, name: '还有额度的人' }
+    '222': { dayKey: today, used: 10, spent: 10, name: '还有额度的人' },
+    '999': { dayKey: today, used: 900, spent: 900, name: '主人' },
+    '111111': { dayKey: today, used: 50, spent: 50, name: '待重置' },
+    '222222': { dayKey: today, used: 50, spent: 50, name: '非主人目标' }
   },
   totals: {}, blocked: {}, userFloors: {}
 }));
@@ -127,3 +130,44 @@ assert.ok(!normal.isError);
 ok('send_message 拒绝 @/引用被拦者，普通发言不受影响');
 
 console.log(`\nquota-guard 静默成员 ${pass - 7} 项检查通过 ✅`);
+
+// ── 主人豁免 + 重置指令 ─────────────────────────────────────────────────
+updateConfig({
+  persona: { ...(getConfig().persona || {}), masterQQ: '999' },
+  skills: { 'quota-guard': { enabled: true, resetHour: 0, defaultDailyLimit: 100 } }
+});
+
+// 主人自己用了 900（远超 100）也不该被算超额
+const masterGate = await gate({ ...base, triggerEntries: [{ senderId: '999', senderName: '主人', text: 'hi' }] });
+assert.equal(masterGate, null);
+ok('主人不受额度限制（用量超阈仍放行）');
+
+// 主人发「重置 111」→ 清零 + 回确认 + 整轮零消耗
+const sent = [];
+const cmdCtx = {
+  chatKey: 'group:1', kind: 'group', sessionId: 'sR',
+  triggerEntries: [{ senderId: '999', senderName: '主人', text: '重置 111111' }],
+  sender: { sendTextBatch: async (_k, msgs) => { sent.push(...msgs); return { sent: [], failed: [] }; } }
+};
+await qg.hooks['before-context'](cmdCtx, {});
+assert.equal(cmdCtx.triggerEntries.length, 0);
+const handled = await gate({ ...base, sessionId: 'sR', triggerEntries: [] });
+assert.equal(handled?.code, 'handled');
+const ledgerNow = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'quota-guard', 'ledger.json'), 'utf8'));
+assert.equal(Number(ledgerNow.users['111111'].used), 0);
+assert.ok(sent.join('').includes('已重置'));
+ok('主人「重置 QQ号」清零额度、回确认、本轮零消耗');
+
+// 非主人发同样指令 → 不生效
+const before222 = Number(JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'quota-guard', 'ledger.json'), 'utf8')).users['222222'].used);
+const fakeCtx = {
+  chatKey: 'group:1', kind: 'group', sessionId: 'sX',
+  triggerEntries: [{ senderId: '222', senderName: 'B', text: '重置 222222' }],
+  sender: { sendTextBatch: async () => ({ sent: [], failed: [] }) }
+};
+await qg.hooks['before-context'](fakeCtx, {});
+const after222 = Number(JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'quota-guard', 'ledger.json'), 'utf8')).users['222222'].used);
+assert.equal(after222, before222);
+ok('非主人的重置指令不生效');
+
+console.log(`\nquota-guard 主人特权 ${pass - 9} 项检查通过 ✅`);

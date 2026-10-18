@@ -392,7 +392,8 @@ export class Orchestrator {
     };
     try {
       await skillManager.runHook('before-context', {
-        ...skillContext, triggerEntries, store: this.store, memory: this.memory
+        ...skillContext, triggerEntries, store: this.store, memory: this.memory,
+        sender: this.sender, onebot: this.onebot
       });
     } catch (error) {
       skillManager.recordError('before-context', error);
