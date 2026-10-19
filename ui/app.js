@@ -1990,6 +1990,18 @@ function renderChatSection(c) {
       <div class="field"><label>同时处理几个会话</label><input type="number" id="cfg-maxruns" min="1" max="8" value="${esc(c.maxConcurrentRuns)}" /></div>
     </div>
 
+    <h3>回复策略（群聊）</h3>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-reply-enabled" ${c.replyPolicy?.enabled !== false ? 'checked' : ''} />
+      <label for="cfg-reply-enabled">只在被 @ / 叫名字时必回，其余消息按概率偶尔回</label></div>
+    <div class="field-row">
+      <div class="field"><label>必回关键词（逗号分隔）</label>
+        <input type="text" id="cfg-reply-keywords" value="${esc((c.replyPolicy?.keywords || []).join(','))}" />
+        <div class="hint">消息里出现这些词（或机器人昵称）就必定回复。</div></div>
+      <div class="field"><label>普通消息放行概率 0~1</label>
+        <input type="number" id="cfg-reply-prob" step="0.01" min="0" max="1" value="${esc(c.replyPolicy?.otherProbability ?? 0.15)}" />
+        <div class="hint">没被 @、没提关键词时，有多大概率还是接一句。0 = 只在叫它时说话。</div></div>
+    </div>
+
     <h3>发送保护</h3>
     <div class="field-row">
       <div class="field"><label>相邻消息最小间隔（毫秒）</label><input type="number" id="cfg-mingap" min="200" value="${esc(c.send.minGapMs)}" /></div>
@@ -2744,6 +2756,12 @@ async function saveConfig({ quiet = false } = {}) {
       checkIntervalMinMs: Number(val('#cfg-pro-min', c.proactive?.checkIntervalMinMs)) || 1800000,
       checkIntervalMaxMs: Number(val('#cfg-pro-max', c.proactive?.checkIntervalMaxMs)) || 5400000,
       probability: Number(val('#cfg-pro-prob', c.proactive?.probability)) || 0.25
+    };
+    patch.replyPolicy = {
+      ...(c.replyPolicy || {}),
+      enabled: chk('#cfg-reply-enabled', c.replyPolicy?.enabled !== false),
+      keywords: parseList(val('#cfg-reply-keywords', (c.replyPolicy?.keywords || []).join(','))),
+      otherProbability: Math.min(1, Math.max(0, Number(val('#cfg-reply-prob', c.replyPolicy?.otherProbability ?? 0.15))))
     };
     patch.sticker = { ...c.sticker, enabled: chk('#cfg-sticker', c.sticker?.enabled !== false) };
     patch.store = {
