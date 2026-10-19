@@ -1611,6 +1611,31 @@ export function createApp({ log = console.log } = {}) {
       return json(res, 404, { error: `未知 API：${method} ${pathname}` });
     }
 
+    // 本地图库镜像（scripts/mirror-gallery.mjs 生成）：/gallery/<file>
+    if (pathname.startsWith('/gallery/') && req.method === 'GET') {
+      const base = path.resolve(path.join(DATA_DIR, 'gallery-mirror'));
+      const full = path.resolve(base, pathname.slice('/gallery/'.length));
+      const types = {
+        '.json': 'application/json; charset=utf-8', '.webp': 'image/webp', '.png': 'image/png',
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif'
+      };
+      if (full !== base && !full.startsWith(base + path.sep)) { res.writeHead(403); res.end(); return; }
+      try {
+        const data = fs.readFileSync(full);
+        res.writeHead(200, {
+          'content-type': types[path.extname(full)] ?? 'application/octet-stream',
+          // 图片不会变，缓存久一点；索引也可能更新，短缓存
+          'cache-control': path.extname(full) === '.json' ? 'no-cache' : 'public, max-age=604800'
+        });
+        res.end(data);
+        return;
+      } catch {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('gallery file not found');
+        return;
+      }
+    }
+
     // 扩展自带页面：/plugin-ui/<id>/<file> → plugins/<id>/ui/<file>（其次 skills/<id>/ui/）
     if (pathname.startsWith('/plugin-ui/') && req.method === 'GET') {
       const rest = pathname.slice('/plugin-ui/'.length);
