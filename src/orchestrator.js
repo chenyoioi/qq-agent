@@ -285,6 +285,11 @@ export class Orchestrator {
       // 刻意不设 session.error，所以不会走下面的错误/重试分支（重试也没意义）。
       if (runResult && runResult.blocked) {
         const why = runResult.code === 'rate-limited' ? '发送限流前置' : '扩展拦截';
+        // 落进会话记录 + 控制台日志：否则"为什么没回"在事后来看完全不可查
+        session.blocked = true;
+        session.blockCode = runResult.code;
+        session.blockReason = runResult.reason;
+        console.log(`[blocked] ${runKey} code=${runResult.code || '-'} reason=${runResult.reason || '-'}`);
         this.sessions.finish(session.id, 'noreply');
         this.emit('session-end', {
           sessionId: session.id, chatKey: runKey, status: 'noreply',
