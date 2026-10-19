@@ -241,6 +241,7 @@ function renderSkillsPage(data, toolsData) {
       ${fields ? `<div class="skill-settings">${fields}<button class="btn-mini" data-act="save">保存设置</button></div>` : ''}
       <div class="skill-actions">
         <label><input type="checkbox" data-act="toggle" ${sk.active ? 'checked' : ''}> 启用</label>
+        ${sk.hasUi ? `<button class="btn-mini" data-act="panel">打开面板</button>` : ''}
         <button class="btn-mini" data-act="uninstall">卸载</button>
       </div>
     </div>`;
@@ -385,6 +386,10 @@ async function onSkillsClick(ev) {
     if (act === 'install') {
       const input = $('#skill-zip');
       if (input) input.click();
+      return;
+    }
+    if (act === 'panel') {
+      window.open(`/plugin-ui/${encodeURIComponent(id)}/index.html`, '_blank');
       return;
     }
     if (act === 'uninstall') {
@@ -586,7 +591,7 @@ async function loadSessionDetail(id, { quiet = false } = {}) {
 function renderSessionDetail(s) {
   const detail = $('#session-detail');
   // 内容没变（轮询/SSE 重复推送）→ 完全不动 DOM，保住滚动位置和展开状态
-  const fp = `${s.id}|${s.status}|${s.rounds || 0}|${(s.messages || []).length}|${(s.sent || []).length}|${s.error ? 1 : 0}`;
+  const fp = `${s.id}|${s.status}|${s.rounds || 0}|${(s.messages || []).length}|${(s.sent || []).length}|${s.error ? 1 : 0}|${s.blocked ? 1 : 0}`;
   if (lastDetailFp === fp) return;
   const firstRender = lastDetailFp === null;
   lastDetailFp = fp;
@@ -595,7 +600,8 @@ function renderSessionDetail(s) {
   const wasAtBottom = detail.scrollHeight - detail.scrollTop - detail.clientHeight < 48;
   const keepScroll = detail.scrollTop;
   const chatName = s.chatKey.replace('group:', '群 ').replace('private:', '私聊 ');
-  const statusBadge = `<span class="status-badge status-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>`;
+  const statusBadge = `<span class="status-badge status-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>`
+    + (s.blocked ? `<span class="status-badge status-blocked" title="${esc(s.blockReason || '')}">已拦截${s.blockCode ? ' · ' + esc(s.blockCode) : ''}</span>` : '');
   const usage = s.usage || {};
 
   const html = [];
@@ -608,6 +614,7 @@ function renderSessionDetail(s) {
         <span>模型 ${esc(s.model || '-')}</span>
         <span>${usage.calls || 0} 次调用 · ${fmtTokens(usage.promptTokens)} 入 / ${fmtTokens(usage.completionTokens)} 出 / ${fmtTokens(usage.totalTokens)} 总</span>
         <span>${s.rounds || 0} 轮工具</span>
+        ${s.blocked ? `<span class="block-reason">本轮未请求模型：${esc(s.blockReason || s.blockCode || '被扩展拦截')}</span>` : ''}
       </div>
     </div>`);
 

@@ -1079,8 +1079,15 @@ export function createApp({ log = console.log } = {}) {
         const uninstalled = listConfiguredSkillIds()
           .filter((id) => !installed.has(id))
           .map((id) => ({ id, enabled: getConfig().skills?.[id]?.enabled !== false }));
+        // 带上"是否有自带面板"：插件可以把页面放在自己目录的 ui/ 下
+        const skills = skillManager.list(context).map((sk) => {
+          const entry = skillManager.registry?.get?.(sk.id);
+          let hasUi = false;
+          try { hasUi = !!entry?.dir && fs.existsSync(path.join(entry.dir, 'ui')); } catch { hasUi = false; }
+          return { ...sk, hasUi };
+        });
         return json(res, 200, {
-          skills: skillManager.list(context),
+          skills,
           summary: skillManager.summary(context),
           capabilities: skillManager.capabilities.list().sort(),
           uninstalled

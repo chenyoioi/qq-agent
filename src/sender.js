@@ -125,8 +125,10 @@ export class SendQueue {
     const promises = [];
     for (let i = 0; i < parts.length; i++) {
       const text = parts[i];
-      const isLast = i === parts.length - 1;
-      const gap = this.#gap(text, isLast);
+      // 间隔应该发生在"两条之间"：第一条立刻发（用户等待的是首字），
+      // 后续每条才按真人节奏停顿。旧写法把 gap 算给了第一条、最后一条反而 0，
+      // 表现是"先等 25~45 秒，然后两条一口气蹦出来"。
+      const gap = i === 0 ? 0 : this.#gap(text, false);
       promises.push(chain(async () => {
         this.#checkRate(chatKey);
         if (gap > 0) await sleep(gap);

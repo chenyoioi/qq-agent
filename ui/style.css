@@ -670,3 +670,6 @@ body {
 .tool-src, .tool-cat { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-toggle { justify-self: center; }
 .cap-badge-off { background: rgba(255, 180, 84, .18); color: var(--orange); }
+
+.status-blocked { background: rgba(255, 180, 84, .18); color: var(--orange); }
+.block-reason { color: var(--orange); }

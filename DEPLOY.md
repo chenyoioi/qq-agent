@@ -94,3 +94,12 @@ cd /root/qq-agent && npm test
 - 想临时关掉：`"enabled": false` 或 `curl -X POST /api/config -d '{"replyPolicy":{"enabled":false}}'`。
 
 > “自己感兴趣的内容”本质上需要模型判断，这里用概率近似：低概率放行 + 提示词里要求“不感兴趣就安静结束”。
+
+## 备份与运维
+
+- **每日自动备份**：`qq-agent-backup.timer`（每天 04:30）执行 `scripts/backup.sh`，
+  把 `data/` 打包到 `/root/qq-agent-backups/`，保留最近 7 份（目录 700、文件 600）。
+  手动跑一次：`bash scripts/backup.sh`；
+- **恢复**：停服务 → 解压对应 `data-*.tgz` 覆盖 `data/` → 启服务；
+- **日志**：journald 已限 200M；查拦截原因 `journalctl -u qq-agent | grep '\[blocked\]'`；
+- **控制台**：会话详情里被拦的轮次会显示「已拦截 · 原因」；技能页里有自带面板的扩展会出现「打开面板」按钮。
