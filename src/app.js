@@ -455,13 +455,17 @@ export function createApp({ log = console.log } = {}) {
 
     if (!text && !media.length) return;
     const chatKey = kind + ':' + id;
+    // 是否 @ 了机器人（用于"只在被 @/点名时必回"的门禁）
+    const selfId = String(onebot.selfId || '');
+    const atSelf = !!(segments && selfId && segments.some((seg) => seg?.type === 'at' && String(seg?.data?.qq) === selfId));
     store.appendIncoming(chatKey, {
       mid: event.message_id,
       ts: event.time ? Math.round(Number(event.time) * 1000) : Date.now(),
       senderId,
       senderName,
       text: text || '[图片]' ,
-      media
+      media,
+      atSelf
     });
     emit('chat-update', chatKey);
     // 所有消息都交给模型处理（入库 + 触发），由模型根据上下文自主决定是否回复。

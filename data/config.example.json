@@ -112,5 +112,14 @@
   },
   "extensions": {
     "hotReload": true
+  },
+  "replyPolicy": {
+    "enabled": true,
+    "keywords": [
+      "大肥鱼",
+      "小鲸鱼",
+      "DeepSeek"
+    ],
+    "otherProbability": 0.03
   }
 }

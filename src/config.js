@@ -129,6 +129,12 @@ export const DEFAULT_CONFIG = {
     autoStart: false,         // 开机自启（仅 Electron 桌面端生效）
     closeToTray: true         // 点关闭 = 最小化到托盘
   },
+  // 群聊回复门禁：只在被 @ / 叫名字时必回，其余按概率偶尔回（私聊不受影响）
+  replyPolicy: {
+    enabled: true,
+    keywords: ['大肥鱼', '小鲸鱼', 'DeepSeek'],
+    otherProbability: 0.03
+  },
   // 扩展系统（skills/ + plugins/）
   //   skills[id]    每个 Skill/Plugin 的开关与设置（唯一开关来源）
   //   tools         工具总开关 / 分类开关 / 单工具覆盖

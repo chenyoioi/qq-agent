@@ -74,3 +74,23 @@ curl -X POST http://127.0.0.1:6099/api/QQLogin/RefreshQRcode  # 需 Credential�
 # qq-agent 自检
 cd /root/qq-agent && npm test
 ```
+
+## 回复门禁（群聊）
+
+`config.replyPolicy` 控制机器人在群里什么时候开口：
+
+```json
+"replyPolicy": {
+  "enabled": true,
+  "keywords": ["大肥鱼", "小鲸鱼", "DeepSeek"],
+  "otherProbability": 0.03
+}
+```
+
+- 被 **@**、消息里出现关键词/机器人昵称 → 必定唤醒；
+- 其他消息按 `otherProbability` 概率放行（默认 3%），不通过则消息标已读、**零 token**；
+- 主人（`persona.masterQQ`）不受门禁限制（否则「重置 QQ号」之类的指令会被吞掉）；
+- 私聊不受影响；
+- 想临时关掉：`"enabled": false` 或 `curl -X POST /api/config -d '{"replyPolicy":{"enabled":false}}'`。
+
+> “自己感兴趣的内容”本质上需要模型判断，这里用概率近似：低概率放行 + 提示词里要求“不感兴趣就安静结束”。

@@ -257,6 +257,8 @@ refs:
     maxConcurrentRuns: 2,
     send: { minGapMs: 10, maxGapMs: 20, byLengthMs: 0, maxPerMinute: 100, maxPerHour: 1000, hardSplitAt: 4000 },
     proactive: { enabled: false },
+    // 自测里所有消息都要能触发（否则回复门禁会吞掉测试用例）
+    replyPolicy: { enabled: false },
     sticker: { enabled: true, collectEnabled: true },
     store: { maxMessagesPerChat: 0, pastStateLimit: 80, pastStateMaxChars: 6000, keepSessionFiles: 100 },
     server: { port: await freePort(), token: '' }

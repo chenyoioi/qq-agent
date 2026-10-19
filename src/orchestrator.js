@@ -24,6 +24,26 @@ import { modelVisionVerdict } from './vision-scan.js';
  * 同一段 content 可能被多条路径各发一次，造成"同样的消息发两遍"。
  * 独立成模块级函数便于单测。
  */
+/**
+ * 回复门禁（群聊）：只有被 @、被叫到名字、或被引用时必定唤醒；
+ * 其余消息按 otherProbability 偶尔放行（"自己感兴趣的内容"由概率近似）。
+ * 私聊不走这里。
+ */
+export function shouldWakeForReply(entries, policy = {}, names = [], rand = Math.random) {
+  if (policy.enabled === false) return true;
+  const prob = Math.max(0, Math.min(1, Number(policy.otherProbability ?? 0.03)));
+  const kws = [...(policy.keywords || []), ...names]
+    .map((x) => String(x || '').trim().toLowerCase())
+    .filter(Boolean);
+  for (const m of entries || []) {
+    if (!m) continue;
+    if (m.atSelf) return true;
+    const text = String(m.text || '').toLowerCase();
+    if (kws.some((k) => text.includes(k))) return true;
+  }
+  return rand() < prob;
+}
+
 export function alreadySent(session, text) {
   const norm = String(text || '').replace(/\s+/g, '').trim();
   if (!norm) return true;
@@ -263,6 +283,17 @@ export class Orchestrator {
     }
     if (!proactive && triggerEntries.length === 0) return; // 没有未读就不空跑
 
+    // 回复门禁：群里只有 @我 / 叫名字 才必定唤醒；其余按概率偶尔回。
+    // 消息已被 drain（标记已读），这里直接返回 → 不建会话、不调模型，零 token。
+    if (!proactive && parseChatKey(runKey).kind === 'group' && triggerEntries.length) {
+      const policy = getConfig().replyPolicy || {};
+      const names = [getConfig().persona?.botName, this.onebot?.selfNickname].filter(Boolean);
+      // 主人不受门禁限制（否则「重置 12345」这类指令会被直接吞掉）
+      const masterQq = String(getConfig().persona?.masterQQ || '').trim();
+      const fromMaster = !!masterQq && triggerEntries.some((m) => String(m?.senderId ?? '') === masterQq);
+      if (!fromMaster && !shouldWakeForReply(triggerEntries, policy, names)) return;
+    }
+
     this.runningChats.add(runKey);
     const seq = (this.runSeq.get(runKey) || 0) + 1;
     this.runSeq.set(runKey, seq);
@@ -493,7 +524,13 @@ export class Orchestrator {
       ? '\n\n【静默成员】以下成员今日额度已用尽：' + blockedUserIds.join('、')
         + '。不要回复、引用或 @ 他们；他们的消息已从本轮上下文中移除，不要提及、不要猜测或编造他们说了什么。'
       : '';
-    const fullUserPrompt = userPrompt + skillPrompt + blockedPrompt;
+    const replyPolicy = cfg.replyPolicy || {};
+    const policyPrompt = (kind === 'group' && replyPolicy.enabled !== false)
+      ? '\n\n【响应策略】只有被 @、被叫到名字（' + [
+        ...(replyPolicy.keywords || []), persona.botName, persona.selfNickname
+      ].filter(Boolean).join('、') + '）或被引用时才必须回复；其他消息只有你确实感兴趣才回，大多数情况直接安静结束。'
+      : '';
+    const fullUserPrompt = userPrompt + skillPrompt + blockedPrompt + policyPrompt;
 
     session.systemPrompt = systemPrompt;
     session.userPrompt = fullUserPrompt;
