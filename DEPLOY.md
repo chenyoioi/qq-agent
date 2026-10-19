@@ -103,3 +103,19 @@ cd /root/qq-agent && npm test
 - **恢复**：停服务 → 解压对应 `data-*.tgz` 覆盖 `data/` → 启服务；
 - **日志**：journald 已限 200M；查拦截原因 `journalctl -u qq-agent | grep '\[blocked\]'`；
 - **控制台**：会话详情里被拦的轮次会显示「已拦截 · 原因」；技能页里有自带面板的扩展会出现「打开面板」按钮。
+
+## 梗鲸图库本地镜像
+
+这台机器到 Cloudflare 只有 ~55KB/s，拉索引要十几秒、发图经常超时。现在把图库镜像到本地：
+
+```bash
+node scripts/mirror-gallery.mjs --concurrency 12      # 断点续传，可反复跑
+```
+
+- 产物：`data/gallery-mirror/`（`gallery-index.json` + `orig/` + `preview/`）；
+- 控制台通过 `/gallery/*` 提供（图片长缓存、索引 no-cache）；
+- `whale-memes` / `reply-meme` 已改为**本地索引优先、失败回源**；
+- 定时任务 `qq-agent-gallery.timer`：每周日 05:00 自动增量更新；
+- 当前镜像：2141 条，其中 2133 张原图已本地化（剩余 8 张源站超时，仍走远端回退）。
+
+> 索引里的图片 URL 只有在“本地文件确实存在”时才改成本地地址，所以镜像跑一半也不会坏。
