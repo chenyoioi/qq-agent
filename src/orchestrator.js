@@ -37,7 +37,7 @@ export function shouldWakeForReply(entries, policy = {}, names = [], rand = Math
     .filter(Boolean);
   for (const m of entries || []) {
     if (!m) continue;
-    if (m.atSelf) return true;
+    if (m.atSelf || m.replyToSelf) return true;
     const text = String(m.text || '').toLowerCase();
     if (kws.some((k) => text.includes(k))) return true;
   }

@@ -102,7 +102,7 @@ export class ChatStore {
   }
 
   /** 追加一条收到的消息（未读）。返回写入的条目。 */
-  appendIncoming(chatKey, { mid, ts, senderId, senderName, text, reply = null, media = [], atSelf = false }) {
+  appendIncoming(chatKey, { mid, ts, senderId, senderName, text, reply = null, media = [], atSelf = false, replyToSelf = false }) {
     const st = this.#state(chatKey);
     const entry = {
       id: st.nextLocalId++,
@@ -115,7 +115,8 @@ export class ChatStore {
       read: false,
       reply: reply || null,
       media: Array.isArray(media) ? media : [],
-      atSelf: atSelf === true
+      atSelf: atSelf === true,
+      replyToSelf: replyToSelf === true
     };
     st.messages.push(entry);
     this.#trim(st);
