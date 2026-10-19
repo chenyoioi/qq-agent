@@ -42,7 +42,11 @@ import { validateZipStructure, unzipToModuleDir } from './zip-install.js';
 // 动态导入 + 容错：undici 与 Electron 内置 Node 不兼容时只退回默认超时，绝不崩主进程。
 try {
   const { Agent, setGlobalDispatcher } = await import('undici');
-  setGlobalDispatcher(new Agent({ connect: { timeout: 30_000 } }));
+  // family:4 —— 这台机器没有可用 IPv6，而目标域名（Cloudflare）会同时返回 A/AAAA。
+  // Node 的 happy-eyeballs 每个地址只等 250ms，连 Cloudflare 建连要 300~1300ms，
+  // 于是 IPv4 尝试也被判超时（curl 不受影响），表现为 fetch 全部失败。
+  // 固定 IPv4 后，图库索引（880KB）15 秒内能正常下载。
+  setGlobalDispatcher(new Agent({ connect: { timeout: 30_000, family: 4 } }));
 } catch (error) {
   console.warn('[net] 全局连接超时设置失败（使用 undici 默认值 10s）:', error?.message ?? error);
 }

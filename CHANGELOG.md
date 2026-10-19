@@ -1,5 +1,23 @@
 # 更新日志
 
+## 1.1.7（2026-10-19）
+
+### 修复：表情包“连不上图库”
+
+根因是**网络栈**，不是插件：
+
+- 这台机器没有可用 IPv6，而 `aigengtu.com` / `img.aigengtu.com` 在 Cloudflare 上同时返回 A/AAAA；
+- Node 22 的 happy-eyeballs 每个地址只等 **250ms**，而这台机器连 Cloudflare 实际要 300~1300ms，
+  于是所有地址都被判超时（curl 没这个机制所以能通）；
+- 表现就是图库索引/图片 `fetch failed` 或 `aborted due to timeout`，机器人只能说“图库连不上”。
+
+修复：
+
+- 全局 fetch 的 undici Agent 固定 `family: 4`（`src/app.js`）；
+- systemd 额外加 `NODE_OPTIONS=--dns-result-order=ipv4first --network-family-autoselection-attempt-timeout=3000`；
+- 图库索引超时 15s→60s、单图下载超时 8s→20s（索引约 880KB，这台机器下行只有 ~55KB/s）；
+- 图库索引刷新周期 12h→168h，减少无谓重试（本地已有 2100+ 张缓存）。
+
 ## 1.1.6（2026-10-19）
 
 ### 调整
