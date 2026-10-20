@@ -26,3 +26,18 @@ for (const t of ['你好', '今天吃什么', '关我什么事', '这个功能�
 }
 
 console.log(`\n主人指令解析 ${pass} 项检查通过 ✅`);
+
+// 扩展匹配：模糊匹配 + 全部
+import { matchExtensions } from '../src/master-command.js';
+const list = [
+  { id: 'netease-voice-song', name: '点歌发语音条', enabled: true },
+  { id: 'voxcpm-voice', name: '鲸鱼语音（VoxCPM）', enabled: true },
+  { id: 'whale-memes', name: '梗鲸表情包', enabled: true },
+  { id: 'quota-guard', name: 'Token 配额守卫', enabled: true }
+];
+assert.deepEqual(matchExtensions(list, '点歌').map((x) => x.id), ['netease-voice-song']);
+assert.deepEqual(matchExtensions(list, '梗鲸').map((x) => x.id), ['whale-memes']);
+assert.deepEqual(matchExtensions(list, '配额').map((x) => x.id), ['quota-guard']);
+assert.equal(matchExtensions(list, '所有').length, 4);
+assert.equal(matchExtensions(list, '不存在的东西').length, 0);
+console.log('扩展匹配 5 项检查通过 ✅');

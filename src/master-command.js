@@ -75,3 +75,39 @@ export function parseMasterCommand(text) {
 
   return null;
 }
+
+/** 大列表里的模糊匹配：精确 → 包含 → 二元组相似度（≥0.5） */
+export function matchExtensions(list, query) {
+  const q = String(query ?? '').trim();
+  const arr = Array.isArray(list) ? list : [];
+  if (!q) return [];
+  if (/^(?:所有|全部|一切|每个|全)$/.test(q)) return arr.slice();
+
+  const exact = arr.filter((s) => String(s.id) === q || String(s.name) === q);
+  if (exact.length) return exact;
+
+  const inc = arr.filter((s) => {
+    const name = String(s.name ?? '');
+    const id = String(s.id ?? '');
+    return name.includes(q) || id.includes(q) || (name && q.includes(name));
+  });
+  if (inc.length) return inc;
+
+  const bigrams = (str) => {
+    const out = new Set();
+    for (let i = 0; i < str.length - 1; i++) out.add(str.slice(i, i + 2));
+    return out;
+  };
+  const qb = bigrams(q);
+  if (!qb.size) return [];
+  return arr
+    .map((s) => {
+      const nb = bigrams(String(s.name ?? '') + String(s.id ?? ''));
+      let hit = 0;
+      for (const b of qb) if (nb.has(b)) hit++;
+      return { s, score: hit / qb.size };
+    })
+    .filter((x) => x.score >= 0.5)
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.s);
+}

@@ -19,7 +19,7 @@ import { StickerManager } from './sticker-manager.js';
 import { SendQueue } from './sender.js';
 import { SessionRegistry } from './sessions.js';
 import { Orchestrator } from './orchestrator.js';
-import { parseMasterCommand } from './master-command.js';
+import { parseMasterCommand, matchExtensions } from './master-command.js';
 import { listModels, estimateCost, chatCompletion } from './llm.js';
 import { importFromDsh, currentProviders, setProviderKey, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
 import { scanModelsVision, visionResults } from './vision-scan.js';
@@ -321,13 +321,21 @@ export function createApp({ log = console.log } = {}) {
     const fromMaster = entries.some((e) => String(e?.senderId ?? '') === master);
     if (!fromMaster) return false;
     const text = String(entries[entries.length - 1]?.text ?? '').trim();
+    const ctx = skillRuntimeContext();
+    const list = skillManager.list(ctx);
+
+    // 指令之外的两个查询：「看看有哪些插件/技能」「X 开没开」
+    const maybeToggle = /(?:关闭|关掉|开启|打开|禁用|停用|恢复|启用|别)/.test(text);
+    if (!maybeToggle && /(?:列出|查看|看看|有哪些|啥|所有|全部).{0,4}(?:插件|技能|扩展)|(?:插件|技能|扩展).{0,4}(?:列表|有哪些|状态)/.test(text)) {
+      const lines = list.map((s) => `${s.enabled === false ? '⛔' : '✅'} ${s.name || s.id}`);
+      await sender.sendTextBatch(chatKey, [`共 ${list.length} 个扩展：`, ...lines].join('\n'), {});
+      return true;
+    }
+
     const parsed = parseMasterCommand(text);
     if (!parsed) return false;
     const on = parsed.action === 'on';
     const q = parsed.query;
-
-    const ctx = skillRuntimeContext();
-    const list = skillManager.list(ctx);
     // 常用别名 → 扩展 id（说人话也能对上）
     const alias = {
       '点歌': 'netease-voice-song', '放歌': 'netease-voice-song', '听歌': 'netease-voice-song',
@@ -340,7 +348,7 @@ export function createApp({ log = console.log } = {}) {
       '花钱': 'group-cost-report', '花费': 'group-cost-report'
     };
     const wantId = alias[q] || '';
-    let hits = wantId ? list.filter((s) => s.id === wantId) : list.filter((s) => String(s.name || '').includes(q) || String(s.id || '').includes(q));
+    let hits = wantId ? list.filter((s) => s.id === wantId) : matchExtensions(list, q);
     if (!hits.length) {
       const fuzzy = list.filter((s) => q && (String(s.name || '').includes(q.slice(0, 2)) || String(s.id || '').includes(q.slice(0, 2))));
       if (fuzzy.length === 1) hits = fuzzy;
@@ -353,8 +361,16 @@ export function createApp({ log = console.log } = {}) {
       await sender.sendTextBatch(chatKey, `没找到叫「${q}」的技能或插件`, {});
       return true;
     }
+    if (hits.length > 1 && /^(?:所有|全部|一切|每个|全)$/.test(q)) {
+      for (const s of hits) {
+        setSkillEnabled(s.id, on);
+        try { on ? skillManager.activate(s.id, ctx) : skillManager.deactivate(s.id, ctx); } catch { /* 单个失败不影响其它 */ }
+      }
+      await sender.sendTextBatch(chatKey, `${on ? '已全部开启' : '已全部关闭'}（${hits.length} 个扩展）`, {});
+      return true;
+    }
     if (hits.length > 1) {
-      await sender.sendTextBatch(chatKey, `「${q}」对应多个：${hits.slice(0, 5).map((s) => s.name || s.id).join('、')}，说具体一点？`, {});
+      await sender.sendTextBatch(chatKey, `「${q}」对应多个：${hits.slice(0, 6).map((s) => s.name || s.id).join('、')}，说具体一点？`, {});
       return true;
     }
     const hit = hits[0];
