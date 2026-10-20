@@ -49,24 +49,39 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   }
 
   let res;
-  try {
-    res = await fetch(joinUrl(cfg.baseUrl, '/chat/completions'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...authHeaders(cfg.apiKey) },
-      body: JSON.stringify(finalBody),
-      signal: controller.signal
-    });
-  } catch (error) {
-    clearTimeout(timer);
-    if (error?.name === 'AbortError') throw new Error(`模型请求超时（${cfg.timeoutMs}ms）`);
-    throw new Error(`模型请求失败：${error?.cause?.message ?? error?.message ?? error}`);
+  // 主模型失败（503/429/5xx/网络/超时）时按顺序切备用模型重试一次。
+  // 备用列表来自 config.api.fallbackModels；为空时行为和以前完全一致。
+  const tryModels = [cfg.model, ...(Array.isArray(cfg.fallbackModels) ? cfg.fallbackModels : [])]
+    .map((m) => String(m || '').trim()).filter(Boolean);
+  res = null;
+  let lastError = null;
+  for (const model of tryModels) {
+    try {
+      res = await fetch(joinUrl(cfg.baseUrl, '/chat/completions'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...authHeaders(cfg.apiKey) },
+        body: JSON.stringify({ ...finalBody, model }),
+        signal: controller.signal
+      });
+    } catch (error) {
+      res = null;
+      if (error?.name === 'AbortError') {
+        clearTimeout(timer);
+        throw new Error(`模型请求超时（${cfg.timeoutMs}ms）`);
+      }
+      lastError = new Error(`模型请求失败：${error?.cause?.message ?? error?.message ?? error}`);
+      continue;
+    }
+    if (res.ok) { finalBody = { ...finalBody, model }; break; }
+    const text = await res.text().catch(() => '');
+    lastError = new Error(`模型 API HTTP ${res.status}：${text.slice(0, 500)}`);
+    if (![408, 409, 425, 429, 500, 502, 503, 504].includes(res.status)) break;
+    if (tryModels.indexOf(model) < tryModels.length - 1) {
+      console.warn(`[llm] ${model} 返回 ${res.status}，换备用模型重试`);
+    }
   }
   clearTimeout(timer);
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`模型 API HTTP ${res.status}：${text.slice(0, 500)}`);
-  }
+  if (!res || !res.ok) throw lastError ?? new Error('模型请求失败');
   const data = await res.json().catch(() => { throw new Error('模型 API 返回了无法解析的 JSON'); });
   const choice = data?.choices?.[0];
   if (!choice) throw new Error(`模型 API 响应缺少 choices：${JSON.stringify(data).slice(0, 300)}`);

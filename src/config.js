@@ -19,7 +19,9 @@ export const DEFAULT_CONFIG = {
     provider: '',                           // 当前模型所属提供商（多提供商目录的选中项）
     vision: true,                           // 模型是否支持图片输入（关掉则移除看图工具）
     temperature: 0.8,
-    maxRounds: 12,                          // 单次运行的最多工具轮数
+    maxRounds: 12,
+    // 主模型 5xx/429/网络失败时依次尝试（留空 = 不回退）
+    fallbackModels: [],                          // 单次运行的最多工具轮数
     timeoutMs: 180000,
     // 展示用单价（元 / 百万 token），不参与任何请求
     priceInputPerM: 0,
@@ -130,6 +132,11 @@ export const DEFAULT_CONFIG = {
     closeToTray: true         // 点关闭 = 最小化到托盘
   },
   // 群聊回复门禁：只在被 @ / 叫名字时必回，其余按概率偶尔回（私聊不受影响）
+  // 掉线告警：账号离线超过 N 分钟时打日志，并（可选）POST 到 webhook
+  alerts: {
+    webhookUrl: '',
+    offlineMinutes: 5
+  },
   replyPolicy: {
     enabled: true,
     keywords: ['大肥鱼', '小鲸鱼', 'DeepSeek'],

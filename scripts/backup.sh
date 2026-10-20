@@ -19,6 +19,7 @@ out="$DEST/data-$ts.tgz"
 # 排除可重建的缓存（表情图库索引、二维码），其余全备
 tar czf "$out" \
   --exclude='data/whale-memes' \
+  --exclude='data/gallery-mirror' \
   --exclude='data/napcat-qrcode.png' \
   -C "$APP_DIR" data
 

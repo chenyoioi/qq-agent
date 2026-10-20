@@ -1742,6 +1742,29 @@ export function createApp({ log = console.log } = {}) {
 
     // 启动账号健康探针（60 秒一次）
     onebotHealth.start();
+
+    // ── 掉线告警：账号离线超过阈值时记日志；填了 webhook 就推一条 ──
+    let offlineSince = 0;
+    let offlineAlerted = false;
+    setInterval(() => {
+      try {
+        const snap = onebotHealth.snapshot();
+        const cfgNow = getConfig();
+        const offline = snap.online === false || (!onebot.connected && onebot.everConnected);
+        const minutes = Math.max(1, Number(cfgNow.alerts?.offlineMinutes) || 5);
+        if (!offline) { offlineSince = 0; offlineAlerted = false; return; }
+        if (!offlineSince) offlineSince = Date.now();
+        if (offlineAlerted || Date.now() - offlineSince < minutes * 60000) return;
+        offlineAlerted = true;
+        const text = `QQ 账号已离线约 ${Math.round((Date.now() - offlineSince) / 60000)} 分钟（${new Date().toLocaleString('zh-CN')}），请检查 NapCat / 扫码。`;
+        console.warn('[alert] ' + text);
+        const url = String(cfgNow.alerts?.webhookUrl || '').trim();
+        if (url) {
+          fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }), signal: AbortSignal.timeout(10000) })
+            .catch((e) => console.warn('[alert] webhook 发送失败：' + (e?.message ?? e)));
+        }
+      } catch { /* 告警自身不能影响主流程 */ }
+    }, 60000)?.unref?.();
     qrGuard.start();
 
     // 拉起 SnowLuma（如配置了自动启动）、连 OneBot。

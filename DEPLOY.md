@@ -119,3 +119,13 @@ node scripts/mirror-gallery.mjs --concurrency 12      # 断点续传，可反复
 - 当前镜像：2141 条，其中 2133 张原图已本地化（剩余 8 张源站超时，仍走远端回退）。
 
 > 索引里的图片 URL 只有在“本地文件确实存在”时才改成本地地址，所以镜像跑一半也不会坏。
+
+## 掉线告警与模型回退
+
+```json
+"alerts": { "webhookUrl": "", "offlineMinutes": 5 },
+"api": { "fallbackModels": ["备用模型名"] }
+```
+
+- 账号离线超过 `offlineMinutes` → 打 `[alert]` 日志；填了 `webhookUrl` 就 POST `{"text": "..."}`（企微/钉钉/Slack 的 webhook 都能用）；
+- 主模型返回 5xx/429/网络错误时，按 `fallbackModels` 顺序重试一次，全失败才报错。

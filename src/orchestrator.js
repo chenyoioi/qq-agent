@@ -285,12 +285,20 @@ export class Orchestrator {
 
     // 回复门禁：群里只有 @我 / 叫名字 才必定唤醒；其余按概率偶尔回。
     // 消息已被 drain（标记已读），这里直接返回 → 不建会话、不调模型，零 token。
+    let fromMaster = false;
+    let strongHit = false;
     if (!proactive && parseChatKey(runKey).kind === 'group' && triggerEntries.length) {
       const policy = getConfig().replyPolicy || {};
       const names = [getConfig().persona?.botName, this.onebot?.selfNickname].filter(Boolean);
       // 主人不受门禁限制（否则「重置 12345」这类指令会被直接吞掉）
       const masterQq = String(getConfig().persona?.masterQQ || '').trim();
-      const fromMaster = !!masterQq && triggerEntries.some((m) => String(m?.senderId ?? '') === masterQq);
+      fromMaster = !!masterQq && triggerEntries.some((m) => String(m?.senderId ?? '') === masterQq);
+      // 这一批有没有"硬命中"（@我/叫我/引用我）——没有的话就是随机放行
+      strongHit = triggerEntries.some((m) => {
+        if (m?.atSelf || m?.replyToSelf) return true;
+        const text = String(m?.text || '').toLowerCase();
+        return names.some((n) => n && text.includes(String(n).toLowerCase()));
+      });
       if (!fromMaster && !shouldWakeForReply(triggerEntries, policy, names)) return;
     }
 
@@ -311,7 +319,7 @@ export class Orchestrator {
     this.emit('chat-update', runKey);
 
     try {
-      const runResult = await this.#runAgent(session, { kind, chatId, chatKey: runKey, triggerEntries, proactive, seq, taskContext, pushTask });
+      const runResult = await this.#runAgent(session, { kind, chatId, chatKey: runKey, triggerEntries, proactive, seq, taskContext, pushTask, probabilistic: !proactive && !fromMaster && !strongHit });
       // 配额/限流拦截：这一轮一条 LLM 请求都没发出去，按"没回话"正常收尾。
       // 刻意不设 session.error，所以不会走下面的错误/重试分支（重试也没意义）。
       if (runResult && runResult.blocked) {
@@ -374,7 +382,7 @@ export class Orchestrator {
     return null;
   }
 
-  async #runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, taskContext = null, pushTask = null }) {
+  async #runAgent(session, { kind, chatId, chatKey, triggerEntries, proactive, seq, taskContext = null, pushTask = null, probabilistic = false }) {
     const cfg = getConfig();
     const chatName = kind === 'group' ? await this.#chatName(chatId) : '';
     const ident0 = resolvePersona(chatKey);
@@ -528,7 +536,7 @@ export class Orchestrator {
     const policyPrompt = (kind === 'group' && replyPolicy.enabled !== false)
       ? '\n\n【响应策略】被 @、被叫到名字（' + [
         ...(replyPolicy.keywords || []), persona.botName, persona.selfNickname
-      ].filter(Boolean).join('、') + '）或被引用时必须回复。系统既然把这条消息放行给你，说明它值得接：能接就接一句，一句短的也行；只有真的插不上话、或者没什么想说的，才安静结束。消息后面标着（已撤回）的，不要回应它的内容。不要编造系统限制（额度、冷却、超量）来拒绝请求——只有工具真的报错才说。'
+      ].filter(Boolean).join('、') + '）或被引用时必须回复。系统既然把这条消息放行给你，说明它值得接：能接就接一句，一句短的也行；只有真的插不上话、或者没什么想说的，才安静结束。消息后面标着（已撤回）的，不要回应它的内容。不要编造系统限制（额度、冷却、超量）来拒绝请求——只有工具真的报错才说。' + (probabilistic ? '（这一轮是随机放行：没人叫你，不勉强；但如果这话你接得上，说一句比沉默更像真人。）' : '')
       : '';
     const fullUserPrompt = userPrompt + skillPrompt + blockedPrompt + policyPrompt;
 

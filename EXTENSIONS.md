@@ -139,3 +139,11 @@ await ctx.sender.sendMedia(ctx.chatKey, [{ type: 'record', data: { file: '/tmp/x
 - 走同一条发送队列：串行、限频、留档；
 - 本地绝对路径会自动补 `file://`（NapCat 对裸路径也认，但显式更稳）；
 - 工具 id 带命名空间（`插件名__工具名`），模型用**裸名**调用时，核心会在唯一匹配时自动纠正。
+
+## 兼容层与常用符号
+
+扩展请统一从 `src/plugin-compat.js` 取小工具，避免核心重构后“装上了加载失败”：
+
+```js
+import { toFileUri, sleep, randInt, getConfig, DATA_DIR } from '../../src/plugin-compat.js';
+```
