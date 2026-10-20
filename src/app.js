@@ -312,6 +312,32 @@ export function createApp({ log = console.log } = {}) {
   });
   const orchestrator = new Orchestrator({ store, memory, stickers, sender, sessions, onebot, emit });
 
+  // 主人指令：在群里/私聊里用大白话开关技能与插件（确定性执行，0 token）
+  //   「关闭点歌」「打开语音」「停用表情包」…
+  orchestrator.masterCommandHandler = async (chatKey, entries) => {
+    const master = String(getConfig().persona?.masterQQ || '').trim();
+    if (!master) return false;
+    const fromMaster = entries.some((e) => String(e?.senderId ?? '') === master);
+    if (!fromMaster) return false;
+    const text = String(entries[entries.length - 1]?.text ?? '').trim();
+    const m = /^(关闭|关掉|禁用|停用|开启|打开|启用|恢复)\s*([^\s，。！？]{1,12}?)(功能|插件|技能|扩展)?$/.exec(text);
+    if (!m) return false;
+    const on = ['开启', '打开', '启用', '恢复'].includes(m[1]);
+    const q = String(m[2] || '').replace(/(功能|插件|技能|扩展)$/, '').trim();
+    if (!q) return false;
+    const ctx = skillRuntimeContext();
+    const list = skillManager.list(ctx);
+    const hit = list.find((s) => String(s.name || '').includes(q) || String(s.id || '').includes(q));
+    if (!hit) {
+      await sender.sendTextBatch(chatKey, `没找到叫「${q}」的技能或插件`, {});
+      return true;
+    }
+    setSkillEnabled(hit.id, on);
+    try { on ? skillManager.activate(hit.id, ctx) : skillManager.deactivate(hit.id, ctx); } catch (e) { log(`[skill] 切换 ${hit.id} 失败：${e?.message ?? e}`); }
+    await sender.sendTextBatch(chatKey, `${on ? '已开启' : '已关闭'}「${hit.name || hit.id}」`, {});
+    return true;
+  };
+
   // 每晚定时私聊播报次日课程（应用内调度器，不用 cron/systemd；配置见 data/config.json 的 scheduleNotify）
   const scheduleNotify = new ScheduleNotifyScheduler({ orchestrator, sender, onebot, log, root: ROOT });
   // 通用定时任务（主人在 QQ 里下的提醒/定时指令）

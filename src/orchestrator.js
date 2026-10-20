@@ -81,6 +81,8 @@ export class Orchestrator {
     this.paused = false;
     this.pauseReason = null;
     this.proactiveTimer = null;
+    // 主人指令（开关扩展）由 app 层注入：orchestrator 不直接碰扩展管理器
+    this.masterCommandHandler = null;
     this.aborted = false;
   }
 
@@ -285,6 +287,15 @@ export class Orchestrator {
 
     // 回复门禁：群里只有 @我 / 叫名字 才必定唤醒；其余按概率偶尔回。
     // 消息已被 drain（标记已读），这里直接返回 → 不建会话、不调模型，零 token。
+    // 主人指令优先：开关扩展这类事应该"说了就办"，不能交给模型临场发挥
+    if (!proactive && triggerEntries.length && typeof this.masterCommandHandler === 'function') {
+      try {
+        if (await this.masterCommandHandler(runKey, triggerEntries)) return;
+      } catch (error) {
+        console.error('[orchestrator] 主人指令处理失败:', error?.message ?? error);
+      }
+    }
+
     let fromMaster = false;
     let strongHit = false;
     if (!proactive && parseChatKey(runKey).kind === 'group' && triggerEntries.length) {
