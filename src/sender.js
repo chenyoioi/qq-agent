@@ -7,6 +7,34 @@ import { getConfig } from './config.js';
 import { sleep, randInt, createSendChain, escapeCqText, formatClockTime } from './util.js';
 import { mdToPlain, splitForQQ } from './md-to-plain.js';
 
+/**
+ * 本地路径 → file:// URI（插件常用）。
+ * NapCat 对 file:/// 与裸路径都认，但显式 URI 更稳，且能处理 Windows 盘符与空格。
+ */
+export function toFileUri(filePath) {
+  const p = String(filePath ?? '').trim();
+  if (!p) return '';
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(p)) return p; // 已经是 URI
+  const normalized = p.replace(/\\/g, '/');
+  // encodeURI 保留 / 和 :（Windows 盘符要保住冒号），只转空格等特殊字符
+  const encoded = encodeURI(normalized);
+  return encoded.startsWith('/') ? `file://${encoded}` : `file:///${encoded}`;
+}
+
+/**
+ * 清掉模型把“工具调用协议”当正文吐出来的残渣。
+ * DeepSeek 系模型偶尔输出 `<｜｜DSML｜｜ calls> ...` 这类全角标记，
+ * 中文正则/HTML 清洗都拦不住（以 ｜ 开头），发到群里就是一串英文乱码。
+ */
+export function stripToolMarkup(text) {
+  let t = String(text ?? '');
+  t = t.replace(/<[｜|]{1,2}[\s\S]*?(?:>|$)/g, '');        // <｜｜DSML｜｜ ...>
+  t = t.replace(/<\/?[｜|][\s\S]*$/g, '');                 // 收尾半截 </｜｜DSML
+  t = t.replace(/<\|[^>\n]{0,200}(?:>|$)/g, '');           // <|...|>
+  t = t.replace(/(?:^|\n)\s*(?:calls?|invoke|parameter)\b[^\n]*/gi, ''); // 剥剩下的裸协议行
+  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export class SendQueue {
   constructor({ onebot, store, onSent = null }) {
     this.onebot = onebot;
@@ -105,7 +133,13 @@ export class SendQueue {
     const hardSplitAt = Number(getConfig().send?.hardSplitAt) || 0;
     const parts = [];
     for (const m of list) {
-      let plain = mdToPlain(String(m ?? ''));
+      // 只要夹带工具协议标记（<｜…> / <|…|>），整条丢弃：这类内容不是给人看的，
+      // 拆出半截（比如参数里的 "10"）反而更怪。
+      if (/<[｜|]/.test(String(m ?? ''))) {
+        console.warn('[sender] 已丢弃一条含工具协议残渣的消息');
+        continue;
+      }
+      let plain = stripToolMarkup(mdToPlain(String(m ?? '')));
       if (!plain) continue;
       // 统一清洗模型偶尔夹带的 XML 工具调用残留（</parameter></invoke></tool_calls> 等）
       plain = plain
