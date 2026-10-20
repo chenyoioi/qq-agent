@@ -304,6 +304,8 @@ export class Orchestrator {
       // 主人不受门禁限制（否则「重置 12345」这类指令会被直接吞掉）
       const masterQq = String(getConfig().persona?.masterQQ || '').trim();
       fromMaster = !!masterQq && triggerEntries.some((m) => String(m?.senderId ?? '') === masterQq);
+      // 主人发言触发的回复不受发送限流限制：群里再吵，他这句话也发得出去
+      if (fromMaster) this.sender?.allowRateBypass?.(runKey, 90000);
       // 这一批有没有"硬命中"（@我/叫我/引用我）——没有的话就是随机放行
       strongHit = triggerEntries.some((m) => {
         if (m?.atSelf || m?.replyToSelf) return true;

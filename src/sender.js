@@ -41,6 +41,7 @@ export class SendQueue {
     this.store = store;
     this.onSent = onSent;
     this.chains = new Map();      // chatKey -> enqueue fn
+    this.rateBypass = new Map();  // chatKey -> 截止时间戳（主人触发的那一轮免限流）
     this.minuteTimes = new Map(); // chatKey -> [ts]
     this.hourTimes = new Map();   // chatKey -> [ts]
   }
@@ -48,6 +49,13 @@ export class SendQueue {
   #chain(chatKey) {
     if (!this.chains.has(chatKey)) this.chains.set(chatKey, createSendChain());
     return this.chains.get(chatKey);
+  }
+
+  /** 让某个会话在接下来一段时间内不受发送限流限制（主人发言时用）。 */
+  allowRateBypass(chatKey, ms = 90000) {
+    const until = Date.now() + Math.max(1000, Number(ms) || 90000);
+    this.rateBypass.set(String(chatKey), until);
+    return until;
   }
 
   #checkRate(chatKey) {
@@ -58,10 +66,11 @@ export class SendQueue {
     if (maxMin <= 0 && maxHour <= 0) return;   // 0/缺省 = 不限速（主人已取消频率限制）
     const minute = (this.minuteTimes.get(chatKey) || []).filter((t) => now - t < 60000);
     const hour = (this.hourTimes.get(chatKey) || []).filter((t) => now - t < 3600000);
-    if (maxMin > 0 && minute.length >= maxMin) {
+    const bypass = (this.rateBypass.get(String(chatKey)) || 0) > now;
+    if (maxMin > 0 && minute.length >= maxMin && !bypass) {
       throw new Error(`发送频率超限（每分钟最多 ${maxMin} 条），请等一会再发`);
     }
-    if (maxHour > 0 && hour.length >= maxHour) {
+    if (maxHour > 0 && hour.length >= maxHour && !bypass) {
       throw new Error(`发送频率超限（每小时最多 ${maxHour} 条）`);
     }
     minute.push(now);
