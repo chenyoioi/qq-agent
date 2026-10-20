@@ -111,3 +111,12 @@ export function matchExtensions(list, query) {
     .sort((a, b) => b.score - a.score)
     .map((x) => x.s);
 }
+
+/** 闭嘴/张嘴：控制机器人整体是否说话（暂停/恢复），返回 'mute' | 'unmute' | null */
+export function matchMuteCommand(text) {
+  const t = String(text ?? '').trim().replace(/[。.!！~～\s]+$/g, '');
+  if (!t || t.length > 12) return null;
+  if (/^(?:闭嘴|闭麦|别说话|别说了|安静|安静点|别回了|停止回复|先别说话|不要说话|少说话)$/.test(t)) return 'mute';
+  if (/^(?:张嘴|开麦|说话|可以说话|恢复说话|继续说话|别憋着|说句话|出来说话)$/.test(t)) return 'unmute';
+  return null;
+}

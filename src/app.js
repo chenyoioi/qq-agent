@@ -19,7 +19,7 @@ import { StickerManager } from './sticker-manager.js';
 import { SendQueue } from './sender.js';
 import { SessionRegistry } from './sessions.js';
 import { Orchestrator } from './orchestrator.js';
-import { parseMasterCommand, matchExtensions } from './master-command.js';
+import { parseMasterCommand, matchExtensions, matchMuteCommand } from './master-command.js';
 import { listModels, estimateCost, chatCompletion } from './llm.js';
 import { importFromDsh, currentProviders, setProviderKey, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
 import { scanModelsVision, visionResults } from './vision-scan.js';
@@ -539,7 +539,7 @@ export function createApp({ log = console.log } = {}) {
         replyToSelf = !!quoted && String(quoted.senderId) === selfId;
       } catch { replyToSelf = false; }
     }
-    store.appendIncoming(chatKey, {
+    const incoming = store.appendIncoming(chatKey, {
       mid: event.message_id,
       ts: event.time ? Math.round(Number(event.time) * 1000) : Date.now(),
       senderId,
@@ -550,6 +550,23 @@ export function createApp({ log = console.log } = {}) {
       replyToSelf
     });
     emit('chat-update', chatKey);
+
+    // 主人「闭嘴 / 张嘴」：整体暂停或恢复说话（确定性执行，不经过模型）
+    try {
+      const master = String(getConfig().persona?.masterQQ || '').trim();
+      if (master && String(senderId) === master) {
+        const mute = matchMuteCommand(text);
+        if (mute) {
+          orchestrator.setPaused(mute === 'mute', 'master');
+          try { store.markEntryRead(chatKey, incoming?.id); } catch { /* 忽略 */ }
+          await sender.sendTextBatch(chatKey, mute === 'mute' ? '好，我闭嘴' : '来了，说吧', {}).catch(() => {});
+          return;
+        }
+      }
+    } catch (error) {
+      log('[master] 闭嘴/张嘴处理失败：' + (error?.message ?? error));
+    }
+
     // 所有消息都交给模型处理（入库 + 触发），由模型根据上下文自主决定是否回复。
     // 系统提示已引导：@/点名/针对自己的必回；无关群聊/别人的图/别人的引用 → 模型选择安静结束（不回复）。
     orchestrator.onIncoming(chatKey);

@@ -101,6 +101,16 @@ export class ChatStore {
     return { chatKey, total: st.messages.length, unread, lastTs: last?.ts ?? 0, lastText: last?.text ?? '' };
   }
 
+  /** 把某条消息标成已读（插件命中确定性指令后调用，避免模型再处理一遍）。 */
+  markEntryRead(chatKey, localId) {
+    const st = this.#state(chatKey);
+    const hit = (st.messages || []).find((m) => String(m.id) === String(localId));
+    if (!hit || hit.read) return false;
+    hit.read = true;
+    saveChat(st);
+    return true;
+  }
+
   /** 消息被撤回：按 mid 打标，提示词里会显示（已撤回），避免机器人回应已消失的内容。 */
   markRecalled(chatKey, mid) {
     const key = String(mid ?? '').trim();

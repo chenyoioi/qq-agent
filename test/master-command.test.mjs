@@ -41,3 +41,13 @@ assert.deepEqual(matchExtensions(list, '配额').map((x) => x.id), ['quota-guard
 assert.equal(matchExtensions(list, '所有').length, 4);
 assert.equal(matchExtensions(list, '不存在的东西').length, 0);
 console.log('扩展匹配 5 项检查通过 ✅');
+
+// 闭嘴 / 张嘴
+import { matchMuteCommand } from '../src/master-command.js';
+assert.equal(matchMuteCommand('闭嘴'), 'mute');
+assert.equal(matchMuteCommand('别说话。'), 'mute');
+assert.equal(matchMuteCommand('安静点'), 'mute');
+assert.equal(matchMuteCommand('张嘴'), 'unmute');
+assert.equal(matchMuteCommand('可以说话了'), null); // 带“了”不在白名单，避免误判普通聊天
+assert.equal(matchMuteCommand('今天吃什么'), null);
+console.log('闭嘴/张嘴 6 项检查通过 ✅');
