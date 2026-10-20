@@ -569,7 +569,7 @@ export function createApp({ log = console.log } = {}) {
 
     // 所有消息都交给模型处理（入库 + 触发），由模型根据上下文自主决定是否回复。
     // 系统提示已引导：@/点名/针对自己的必回；无关群聊/别人的图/别人的引用 → 模型选择安静结束（不回复）。
-    orchestrator.onIncoming(chatKey);
+    orchestrator.onIncoming(chatKey, incoming);
   }
 
   async function ingestPoke(event) {
@@ -592,7 +592,7 @@ export function createApp({ log = console.log } = {}) {
       const targetName = isGroup ? (await resolveAtName(id, targetId)) || targetId : targetId;
       text = operatorId === targetId ? `[拍一拍] ${operatorName} 拍了拍自己` : `[拍一拍] ${operatorName} 拍了拍 ${targetName}`;
     }
-    store.appendIncoming(`${isGroup ? 'group' : 'private'}:${id}`, {
+    const pokeEntry = store.appendIncoming(`${isGroup ? 'group' : 'private'}:${id}`, {
       mid: null,
       ts: event.time ? Math.round(Number(event.time) * 1000) : Date.now(),
       senderId: operatorId,
@@ -601,7 +601,7 @@ export function createApp({ log = console.log } = {}) {
       media: []
     });
     emit('chat-update', `${isGroup ? 'group' : 'private'}:${id}`);
-    orchestrator.onIncoming(`${isGroup ? 'group' : 'private'}:${id}`);
+    orchestrator.onIncoming(`${isGroup ? 'group' : 'private'}:${id}`, pokeEntry);
   }
 
   async function handleOneBotEvent(event) {
