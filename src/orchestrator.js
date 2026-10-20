@@ -528,7 +528,7 @@ export class Orchestrator {
     const policyPrompt = (kind === 'group' && replyPolicy.enabled !== false)
       ? '\n\n【响应策略】被 @、被叫到名字（' + [
         ...(replyPolicy.keywords || []), persona.botName, persona.selfNickname
-      ].filter(Boolean).join('、') + '）或被引用时必须回复。系统既然把这条消息放行给你，说明它值得接：能接就接一句，一句短的也行；只有真的插不上话、或者没什么想说的，才安静结束。消息后面标着（已撤回）的，不要回应它的内容。'
+      ].filter(Boolean).join('、') + '）或被引用时必须回复。系统既然把这条消息放行给你，说明它值得接：能接就接一句，一句短的也行；只有真的插不上话、或者没什么想说的，才安静结束。消息后面标着（已撤回）的，不要回应它的内容。不要编造系统限制（额度、冷却、超量）来拒绝请求——只有工具真的报错才说。'
       : '';
     const fullUserPrompt = userPrompt + skillPrompt + blockedPrompt + policyPrompt;
 
