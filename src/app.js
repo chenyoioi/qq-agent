@@ -19,6 +19,7 @@ import { StickerManager } from './sticker-manager.js';
 import { SendQueue } from './sender.js';
 import { SessionRegistry } from './sessions.js';
 import { Orchestrator } from './orchestrator.js';
+import { parseMasterCommand } from './master-command.js';
 import { listModels, estimateCost, chatCompletion } from './llm.js';
 import { importFromDsh, currentProviders, setProviderKey, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
 import { scanModelsVision, visionResults } from './vision-scan.js';
@@ -320,18 +321,43 @@ export function createApp({ log = console.log } = {}) {
     const fromMaster = entries.some((e) => String(e?.senderId ?? '') === master);
     if (!fromMaster) return false;
     const text = String(entries[entries.length - 1]?.text ?? '').trim();
-    const m = /^(关闭|关掉|禁用|停用|开启|打开|启用|恢复)\s*([^\s，。！？]{1,12}?)(功能|插件|技能|扩展)?$/.exec(text);
-    if (!m) return false;
-    const on = ['开启', '打开', '启用', '恢复'].includes(m[1]);
-    const q = String(m[2] || '').replace(/(功能|插件|技能|扩展)$/, '').trim();
-    if (!q) return false;
+    const parsed = parseMasterCommand(text);
+    if (!parsed) return false;
+    const on = parsed.action === 'on';
+    const q = parsed.query;
+
     const ctx = skillRuntimeContext();
     const list = skillManager.list(ctx);
-    const hit = list.find((s) => String(s.name || '').includes(q) || String(s.id || '').includes(q));
-    if (!hit) {
+    // 常用别名 → 扩展 id（说人话也能对上）
+    const alias = {
+      '点歌': 'netease-voice-song', '放歌': 'netease-voice-song', '听歌': 'netease-voice-song',
+      '语音': 'voxcpm-voice', '念': 'voxcpm-voice', '朗读': 'voxcpm-voice', '唱歌': 'voxcpm-voice',
+      '表情包': 'whale-memes', '梗图': 'whale-memes', '斗图': 'whale-memes',
+      '复读': 'repeat-echo', '豆包': 'repeat-echo',
+      '审核': 'moderation', '管理': 'moderation',
+      '省token': 'token-saver', '省钱': 'token-saver', '节流': 'token-saver',
+      '配额': 'quota-guard', '额度': 'quota-guard',
+      '花钱': 'group-cost-report', '花费': 'group-cost-report'
+    };
+    const wantId = alias[q] || '';
+    let hits = wantId ? list.filter((s) => s.id === wantId) : list.filter((s) => String(s.name || '').includes(q) || String(s.id || '').includes(q));
+    if (!hits.length) {
+      const fuzzy = list.filter((s) => q && (String(s.name || '').includes(q.slice(0, 2)) || String(s.id || '').includes(q.slice(0, 2))));
+      if (fuzzy.length === 1) hits = fuzzy;
+      else if (fuzzy.length > 1) {
+        await sender.sendTextBatch(chatKey, `「${q}」能对上好几个：${fuzzy.slice(0, 5).map((s) => s.name || s.id).join('、')}，说具体一点？`, {});
+        return true;
+      }
+    }
+    if (!hits.length) {
       await sender.sendTextBatch(chatKey, `没找到叫「${q}」的技能或插件`, {});
       return true;
     }
+    if (hits.length > 1) {
+      await sender.sendTextBatch(chatKey, `「${q}」对应多个：${hits.slice(0, 5).map((s) => s.name || s.id).join('、')}，说具体一点？`, {});
+      return true;
+    }
+    const hit = hits[0];
     setSkillEnabled(hit.id, on);
     try { on ? skillManager.activate(hit.id, ctx) : skillManager.deactivate(hit.id, ctx); } catch (e) { log(`[skill] 切换 ${hit.id} 失败：${e?.message ?? e}`); }
     await sender.sendTextBatch(chatKey, `${on ? '已开启' : '已关闭'}「${hit.name || hit.id}」`, {});
