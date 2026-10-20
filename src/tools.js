@@ -929,7 +929,13 @@ export function toOpenAiTools(defs) {
 
 /** 找到并执行一个工具调用。返回 { content, isError }，content 为 string 或 parts 数组。 */
 export async function executeTool(defs, ctx, name, argsJson) {
-  const def = defs.find((d) => (d.id || d.name) === name);
+  let def = defs.find((d) => (d.id || d.name) === name);
+  // 扩展的工具真实 id 带命名空间（如 voxcpm-voice__read_aloud），但插件自己的提示词
+  // 往往只写裸名（read_aloud）。这里在唯一匹配时容忍裸名，避免模型"按说明调用却报未知工具"。
+  if (!def && typeof name === 'string' && name && !name.includes('__')) {
+    const cands = defs.filter((d) => String(d.id || d.name || '').endsWith('__' + name));
+    if (cands.length === 1) def = cands[0];
+  }
   if (!def) return { content: `错误：未知工具 ${name}`, isError: true };
   let args = {};
   const raw = argsJson ?? '{}';

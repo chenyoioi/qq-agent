@@ -195,6 +195,36 @@ export class SendQueue {
     });
   }
 
+  /**
+   * 发送任意消息段（语音/视频/自定义组合）。
+   * 插件（如 voxcpm-voice）用 ctx.sender.sendMedia(chatKey, [{type:'record',data:{file}}], {label})
+   * 走同一条队列：串行、限频、留档。
+   */
+  sendMedia(chatKey, segments, options = {}) {
+    const [kind, id] = String(chatKey).split(':');
+    const list = Array.isArray(segments) ? segments.filter(Boolean) : [segments].filter(Boolean);
+    if (!list.length) throw new Error('sendMedia 需要至少一个消息段');
+    // 本地绝对路径统一补 file://，NapCat 对 file:// 和裸路径都认，但显式一点更稳
+    const normalized = list.map((seg) => {
+      const file = seg?.data?.file;
+      if (typeof file === 'string' && file.startsWith('/') && ['record', 'image', 'video'].includes(seg.type)) {
+        return { ...seg, data: { ...seg.data, file: `file://${file}` } };
+      }
+      return seg;
+    });
+    const chain = this.#chain(chatKey);
+    return chain(async () => {
+      this.#checkRate(chatKey);
+      await sleep(randInt(600, 1200));
+      const data = await this.onebot.sendSegments(kind, id, normalized);
+      const label = String(options.label || '[媒体]');
+      const ts = Date.now();
+      this.store.appendSelf(chatKey, { text: label, ts });
+      this.onSent?.({ chatKey, text: label, messageId: data?.message_id ?? null });
+      return { message_id: data?.message_id ?? null };
+    });
+  }
+
   /** 发送一个收藏表情（独立气泡）。 */
   sendSticker(chatKey, sticker, options = {}) {
     const [kind, id] = String(chatKey).split(':');

@@ -127,3 +127,15 @@ POST /api/plugin-ui/<id>/action   → 调用插件的 handleUiRequest({ action, 
 - `config.persona.masterQQ` 的人在额度判定里等同“不限”；
 - 主人发 `重置 <QQ号>` 可把对方今日额度清零（保留真实用量 spent），机器人回确认且该轮零消耗；
 - 钩子里要发消息用 `context.sender`（核心自 1.1.3 起在 `before-context` 里提供 `sender` / `onebot`）。
+
+## 发送任意消息段（语音/视频等）
+
+扩展里除了 `sendTextBatch` / `sendImage` / `sendSticker`，还可以用：
+
+```js
+await ctx.sender.sendMedia(ctx.chatKey, [{ type: 'record', data: { file: '/tmp/x.mp3' } }], { label: '[语音]' });
+```
+
+- 走同一条发送队列：串行、限频、留档；
+- 本地绝对路径会自动补 `file://`（NapCat 对裸路径也认，但显式更稳）；
+- 工具 id 带命名空间（`插件名__工具名`），模型用**裸名**调用时，核心会在唯一匹配时自动纠正。
