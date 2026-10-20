@@ -901,12 +901,21 @@ export class Orchestrator {
       const candidates = this.#proactiveCandidates(cfg);
       if (!candidates.length) return;
       const chatKey = candidates[Math.floor(Math.random() * candidates.length)];
+      console.log(`[proactive] 主动机会 -> ${chatKey}`);
       this.wake(chatKey, { proactive: true }).catch((error) => console.error('[orchestrator] proactive 出错:', error));
     };
     this.proactiveTimer = setTimeout(() => { tick().catch(() => {}); }, 15000);
   }
 
   #proactiveCandidates(cfg) {
+    // 安静时段不主动（默认 23:00~08:00），避免半夜自己跳出来吓人
+    const quietStart = Number(cfg.proactive?.quietStartHour ?? 23);
+    const quietEnd = Number(cfg.proactive?.quietEndHour ?? 8);
+    const hour = new Date().getHours();
+    const inQuiet = quietStart > quietEnd
+      ? (hour >= quietStart || hour < quietEnd)
+      : (hour >= quietStart && hour < quietEnd);
+    if (inQuiet) return [];
     const idleMs = Math.max(300000, Number(cfg.proactive?.idleThresholdMs) || 1800000);
     const allowGroups = (cfg.allow?.groups ?? []).map(String);
     const out = [];
