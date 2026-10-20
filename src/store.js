@@ -101,6 +101,18 @@ export class ChatStore {
     return { chatKey, total: st.messages.length, unread, lastTs: last?.ts ?? 0, lastText: last?.text ?? '' };
   }
 
+  /** 消息被撤回：按 mid 打标，提示词里会显示（已撤回），避免机器人回应已消失的内容。 */
+  markRecalled(chatKey, mid) {
+    const key = String(mid ?? '').trim();
+    if (!key) return false;
+    const st = this.#state(chatKey);
+    const hit = (st.messages || []).find((m) => String(m.mid ?? '') === key);
+    if (!hit || hit.recalled) return false;
+    hit.recalled = true;
+    saveChat(st);
+    return true;
+  }
+
   /** 追加一条收到的消息（未读）。返回写入的条目。 */
   appendIncoming(chatKey, { mid, ts, senderId, senderName, text, reply = null, media = [], atSelf = false, replyToSelf = false }) {
     const st = this.#state(chatKey);

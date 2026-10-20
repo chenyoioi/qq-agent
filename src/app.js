@@ -531,6 +531,14 @@ export function createApp({ log = console.log } = {}) {
     if (event.post_type === 'notice' && event.notice_type === 'notify' && event.sub_type === 'poke') {
       return ingestPoke(event);
     }
+    // 消息撤回：只打标，不触发新会话（避免"撤回"本身又把模型叫起来）
+    if (event.post_type === 'notice' && event.notice_type === 'recall') {
+      const gid = event.group_id != null ? String(event.group_id) : '';
+      const chatKey = gid ? `group:${gid}` : `private:${String(event.user_id ?? '')}`;
+      const ok = store.markRecalled(chatKey, event.message_id);
+      if (ok) emit('chat-update', chatKey);
+      return;
+    }
     // meta/心跳等事件忽略
   }
 

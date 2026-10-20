@@ -239,7 +239,8 @@ function formatEntry(m, { withId = true } = {}) {
   const replyPrefix = m.reply?.text || m.reply?.sender ? `[引用 ${[m.reply?.sender, m.reply?.text].filter(Boolean).join('：')}]` : '';
   const hasMid = m.mid !== null && m.mid !== undefined && String(m.mid) !== '';
   const idPrefix = withId && hasMid ? `#${m.mid} ` : '';
-  return `[${formatShortTime(m.ts)}] ${idPrefix}${who}：${replyPrefix}${m.text}`;
+  const revoked = m.recalled ? '（已撤回，别回应这条内容）' : '';
+  return `[${formatShortTime(m.ts)}] ${idPrefix}${who}：${replyPrefix}${m.text}${revoked}`;
 }
 
 /**

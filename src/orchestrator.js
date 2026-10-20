@@ -526,9 +526,9 @@ export class Orchestrator {
       : '';
     const replyPolicy = cfg.replyPolicy || {};
     const policyPrompt = (kind === 'group' && replyPolicy.enabled !== false)
-      ? '\n\n【响应策略】只有被 @、被叫到名字（' + [
+      ? '\n\n【响应策略】被 @、被叫到名字（' + [
         ...(replyPolicy.keywords || []), persona.botName, persona.selfNickname
-      ].filter(Boolean).join('、') + '）或被引用时才必须回复；其他消息只有你确实感兴趣才回，大多数情况直接安静结束。'
+      ].filter(Boolean).join('、') + '）或被引用时必须回复。系统既然把这条消息放行给你，说明它值得接：能接就接一句，一句短的也行；只有真的插不上话、或者没什么想说的，才安静结束。消息后面标着（已撤回）的，不要回应它的内容。'
       : '';
     const fullUserPrompt = userPrompt + skillPrompt + blockedPrompt + policyPrompt;
 
