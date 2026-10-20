@@ -172,16 +172,24 @@ export class SendQueue {
   /** 发送一张任意图片（独立气泡，URL 或本地路径）。 */
   sendImage(chatKey, imageUrl, options = {}) {
     const [kind, id] = String(chatKey).split(':');
+    // 插件（whale-memes / reply-meme）传的是 { file: '/abs/path.webp' }，
+    // 早期核心只接受字符串，String(对象) 会变成 "[object Object]" → NapCat 报
+    // “文件处理失败: 识别URL失败”。这里统一拆包，字符串/对象都支持。
+    const picked = (imageUrl && typeof imageUrl === 'object')
+      ? (imageUrl.file || imageUrl.url || imageUrl.path || '')
+      : imageUrl;
+    const src = String(picked ?? '').trim();
+    if (!src) throw new Error('sendImage 需要一个图片地址或 { file } 对象');
     const chain = this.#chain(chatKey);
     return chain(async () => {
       this.#checkRate(chatKey);
       await sleep(randInt(500, 1200));
-      const data = await this.onebot.sendImage(kind, id, imageUrl, {
+      const data = await this.onebot.sendImage(kind, id, src, {
         replyToMessageId: options.replyToMessageId ?? null,
         atUserId: options.atUserId ?? null
       });
       const ts = Date.now();
-      this.store.appendSelf(chatKey, { text: `[图片:${String(imageUrl).split('/').pop().slice(0, 60)}]`, ts });
+      this.store.appendSelf(chatKey, { text: `[图片:${src.split('/').pop().slice(0, 60)}]`, ts });
       this.onSent?.({ chatKey, text: '[图片]', messageId: data?.message_id ?? null });
       return { message_id: data?.message_id ?? null };
     });

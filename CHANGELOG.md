@@ -1,5 +1,17 @@
 # 更新日志
 
+## 1.1.9（2026-10-20）
+
+### 修复：表情包仍然发不出去
+
+真正的最后一环在**发送参数**：`whale-memes` / `reply-meme` 传给 `sender.sendImage` 的是
+`{ file: '/tmp/xxx.webp' }` 对象，而核心只支持字符串地址，`String(对象)` 变成
+`[object Object]`，NapCat 直接报「文件处理失败: 识别URL失败」。
+
+- `sender.sendImage` 现在同时接受字符串和 `{ file }` / `{ url }` / `{ path }`；
+- 空值会明确报错，不再把 `[object Object]` 丢给 NapCat；
+- 本地绝对路径经实测可直接发送（也兼容 `file://`）。
+
 ## 1.1.8（2026-10-19）
 
 ### 新增：图库本地镜像
