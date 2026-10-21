@@ -48,7 +48,8 @@ export const DEFAULT_CONFIG = {
   security: {
     allowPrivateImageHosts: false           // true 时图片下载允许内网地址（仅本地测试/自建图床）
   },
-  // SnowLuma / OneBot v11
+  // OneBot v11 协议端（历史命名 snowluma：早先内置的是 SnowLuma，现在这套键名指向
+  // 实际使用的协议端 —— 本机是 NapCat。为了不打断已有配置与外部脚本，键名保持不变）
   snowluma: {
     dir: '',                   // SnowLuma 程序目录；留空 = 自动探测项目内 ./snowluma
     autoLaunch: false,         // 应用启动时自动拉起 SnowLuma（未运行时）
@@ -295,6 +296,21 @@ export function resolvePersonaRef(ref) {
     participation: found.participation || cfg.persona.participation,
     customRules: found.customRules || ''
   };
+}
+
+/**
+ * 取某会话**当前生效的人设对象**（不含模式信息）。
+ *
+ * 这是给插件用的兼容入口：老插件（如 bili-browse 的锐评）按 `personaForChat(chatKey)`
+ * 取人设。本宿主的权威实现是 resolvePersona()（含身份模式 / 会话绑定的优先链），
+ * 这里只做薄封装 —— 插件不该再抄一遍优先级，否则两处会漂移成不同的人设。
+ */
+export function personaForChat(chatKey) {
+  try {
+    return resolvePersona(chatKey).persona;
+  } catch {
+    return getConfig().persona;
+  }
 }
 
 /**

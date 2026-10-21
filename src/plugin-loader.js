@@ -31,6 +31,7 @@ import { registerTool, unregisterTool, unregisterToolsBySkill, getTool, listTool
 import { skillManager } from './skills/manager.js';
 import { normalizeManifest, isManifestUsable, SKILL_API_VERSION, kindOfDir } from './skills/manifest.js';
 import { skillErrorText } from './skills/errors.js';
+import { DATA_DIR } from './config.js';
 
 // ⚠️ 必须以**模块自身位置**为锚点，不能用 process.cwd()。
 // 打包/安装版里 App 文件在 <install>/resources/app/，而快捷方式的"起始位置"
@@ -68,6 +69,53 @@ function adaptLegacyPrompt(raw, manifest) {
  * 构造暴露给 Skill 的安全 API。
  * 与旧插件 API 的差别：多了 config / hook 注册 / 能力查询，但仍然只给白名单能力。
  */
+/**
+ * 每个扩展一份极简键值存储（data/skill-storage/<id>.json）。
+ *
+ * 为什么要有它：插件不该为了记"看过哪些视频 / 今天分享几次"去 import fs ——
+ * 加载器的能力闸会因此拒载整个插件。而这类状态又必须跨重启保留，
+ * 否则每次重启都会重发同一个视频。读写都是同步小文件，写入失败只告警。
+ */
+function makeSkillStorage(skillId) {
+  const dir = path.join(DATA_DIR, 'skill-storage');
+  const safeId = String(skillId ?? 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const file = path.join(dir, `${safeId}.json`);
+  let cache = null;
+  const load = () => {
+    if (cache) return cache;
+    try {
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      cache = (raw && typeof raw === 'object') ? raw : {};
+    } catch { cache = {}; }
+    return cache;
+  };
+  const flush = () => {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(cache ?? {}, null, 2), 'utf8');
+    } catch (error) {
+      console.warn(`[skill:${skillId}] 存储写入失败：`, error?.message ?? error);
+    }
+  };
+  return {
+    get(key, fallback = null) {
+      const v = load()[String(key)];
+      return v === undefined ? fallback : v;
+    },
+    set(key, value) {
+      load()[String(key)] = value;
+      flush();
+      return value;
+    },
+    del(key) {
+      const data = load();
+      delete data[String(key)];
+      flush();
+    },
+    all() { return { ...load() }; }
+  };
+}
+
 function createSkillApi(skillId, permissions = []) {
   const has = (name) => permissions.includes(name);
   return {
@@ -124,6 +172,8 @@ function createSkillApi(skillId, permissions = []) {
     fetch: has('web_fetch')
       ? globalThis.fetch
       : () => Promise.reject(new Error(`Skill ${skillId} 未声明 web_fetch 权限`)),
+    // 跨重启的键值存储（get/set/del/all）。不 import fs 也能记住状态。
+    storage: makeSkillStorage(skillId),
     utils: {
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       safeJsonParse: (text, fallback = null) => {

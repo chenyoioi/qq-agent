@@ -263,6 +263,40 @@ export function buildPastState(store, chatKey, { excludeIds = [] } = {}) {
   return { text: lines.map((l) => l.line).join('\n'), count: lines.length };
 }
 
+/**
+ * 消息文本里是否 @ 了机器人（宿主里唯一的权威判定，插件也直接调它）。
+ *
+ * 判定顺序不能反：**QQ 号优先，名字兜底**。
+ *   · 只按名字匹配：群名片（selfNickname）与配置里的名字（botName）不一致时叫不醒；
+ *   · 只按 QQ 号匹配：本宿主把 at 段展平成 `@昵称`（拿到昵称时不再带 QQ），
+ *     于是"有 selfId"反而认不出来。
+ * 所以先认带 QQ 的三种写法，再退回「@昵称 / @机器人名」。
+ *
+ * 覆盖：未展平的 CQ 码 `[CQ:at,qq=123]`、展平的 `@昵称(QQ:123)`、只剩号的 `@123`、
+ * 以及 `@selfNickname` / `@botName`。
+ *
+ * @param {string} text 展平后的消息文本
+ * @param {{selfNickname?: string, botName?: string, selfId?: string}} opts
+ * @returns {boolean}
+ */
+export function isAtMe(text, { selfNickname = '', botName = '', selfId = '' } = {}) {
+  const s = String(text ?? '');
+  if (!s) return false;
+  const id = String(selfId ?? '').trim();
+  if (/^\d+$/.test(id)) {
+    if (new RegExp(`\\[CQ:at,qq=${id}(?:,[^\\]]*)?\\]`).test(s)) return true;
+    if (new RegExp(`@[^\\s@]*\\(QQ:${id}\\)`).test(s)) return true;
+    // 后面不能再接数字：@15357438580 不能被当成 @1535743858
+    if (new RegExp(`@${id}(?!\\d)`).test(s)) return true;
+  }
+  // 名字兜底必须有 '@'（CQ 码那种写法上面已经处理过了）
+  if (!s.includes('@')) return false;
+  for (const n of [String(selfNickname ?? '').trim(), String(botName ?? '').trim()]) {
+    if (n && s.includes(`@${n}`)) return true;
+  }
+  return false;
+}
+
 function triggerLabels(entry, ctx) {
   const labels = [];
   const text = String(entry?.text ?? '');

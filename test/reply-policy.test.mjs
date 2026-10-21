@@ -27,6 +27,25 @@ assert.equal(shouldWakeForReply([
 ], policy, [], () => 0.99), true);
 ok('一批消息里有一条命中就放行');
 
+// ── @ 判定（isAtMe）：插件拿它做「仅 @」准入，QQ 号优先、名字兜底 ──
+const { isAtMe } = await import('../src/prompt.js');
+const at = { selfId: '123456', selfNickname: '大肥鱼', botName: '小鲸鱼' };
+assert.equal(isAtMe('@大肥鱼 在吗', at), true, '群名片 @');
+assert.equal(isAtMe('@小鲸鱼 看这个', at), true, '机器人名 @');
+assert.equal(isAtMe('[CQ:at,qq=123456] 来', at), true, '未展平的 CQ 码');
+assert.equal(isAtMe('[CQ:at,qq=123456,type=1] 来', at), true, '带附加字段的 CQ 码');
+assert.equal(isAtMe('@大肥鱼(QQ:123456) 来', at), true, '展平的 昵称(QQ) 写法');
+assert.equal(isAtMe('@123456 来', at), true, '只剩 QQ 号');
+assert.equal(isAtMe('@1234567 来', at), false, '前缀相同的别的号不该命中');
+assert.equal(isAtMe('@别人 看看', at), false, '@ 别人不算');
+assert.equal(isAtMe('没有艾特', at), false, '没有 @');
+assert.equal(isAtMe('', at), false, '空文本');
+assert.equal(isAtMe('@全体成员', at), false, '@全体成员 不算 @我');
+// 没有 selfId 时按名字兜底；没有 @ 不算
+assert.equal(isAtMe('@大肥鱼 hi', { selfNickname: '大肥鱼' }), true, '无 selfId 时名字兜底');
+assert.equal(isAtMe('随便说说', { selfNickname: '大肥鱼' }), false, '没有 @ 不算');
+ok('@ 判定（isAtMe）按 QQ 号优先、名字兜底');
+
 // 关掉门禁 → 一律放行
 assert.equal(shouldWakeForReply([{ senderId: '1', text: '无关内容' }], { ...policy, enabled: false }, [], () => 0.99), true);
 ok('enabled=false 时不拦截（回到旧行为）');

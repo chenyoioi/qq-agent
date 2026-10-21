@@ -52,11 +52,20 @@ fs.writeFileSync(path.join(fxPlugins, 'example-hook', 'plugin.json'), JSON.strin
   category: 'utility', description: 'fixture', enabledByDefault: true, capabilities: ['example.echo']
 }));
 fs.writeFileSync(path.join(fxPlugins, 'example-hook', 'index.js'), `
+let storage = null;
+export function setup(api) { storage = api?.storage || null; }
 export const providers = { 'example.echo': (t) => String(t ?? '').toUpperCase() };
 export const hooks = {
   'before-llm-messages': (ctx) => {
     const sys = ctx?.messages?.[0];
     if (sys && typeof sys.content === 'string') sys.content += ' [example-hook]';
+  },
+  // onMessage：每条入站消息都要过（触发词类插件靠它），顺便验证 api.storage 能落盘
+  onMessage: (ctx, meta) => {
+    if (!storage) return;
+    storage.set('hits', (storage.get('hits', 0) || 0) + 1);
+    storage.set('lastText', String(ctx?.text ?? ''));
+    storage.set('via', String(meta?.skillId || ''));
   }
 };
 `);
@@ -110,6 +119,16 @@ const msgs = [{ role: 'system', content: 'SYS' }];
 await skillManager.runHook('before-llm-messages', { messages: msgs });
 assert.ok(msgs[0].content.includes('example-hook'));
 ok('plugins/ 的 before-llm-messages 钩子被核心调用');
+
+// 7.5) onMessage 钩子 + 扩展存储（api.storage 落盘，跨调用保留）
+await skillManager.runHook('onMessage', { text: '你好', chatKey: 'group:1' });
+await skillManager.runHook('onMessage', { text: '再来一条', chatKey: 'group:1' });
+const storageFile = path.join(process.env.QQ_AGENT_DATA_DIR, 'skill-storage', 'example-hook.json');
+const savedStorage = JSON.parse(fs.readFileSync(storageFile, 'utf8'));
+assert.equal(savedStorage.hits, 2, 'onMessage 应被调用两次');
+assert.equal(savedStorage.lastText, '再来一条');
+assert.equal(savedStorage.via, 'example-hook', '钩子应拿到自己的 skillId');
+ok('onMessage 钩子被调用，api.storage 落盘且跨调用保留');
 
 // 8) 能力
 assert.equal(skillManager.hasCapability('example.echo'), true);

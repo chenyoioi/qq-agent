@@ -1,5 +1,54 @@
 # 更新日志
 
+## 1.1.27（2026-10-21）
+
+### 界面把「SnowLuma」改成「协议端」（它早就不跑 SnowLuma 了）
+
+问：agent 还用 SnowLuma 吗？界面为什么还叫 SnowLuma？
+
+答：**不用了**。协议端现在是 **NapCat**（systemd 托管 `napcat.service`，OneBot v11
+`ws://127.0.0.1:3001` + `http://127.0.0.1:3000`）；项目里没有 `snowluma/` 目录，
+`src/onebot.js` 直连 OneBot v11（SnowLuma SDK 早就摘掉了），二维码 / 账密登录 / 账号切号
+走的全是 `napcat-qr.js` / `napcat-webui.js`。配置里的 `snowluma.dir` 甚至已经指向
+`/root/napcat/opt/QQ/resources/app/app_launcher/napcat`。
+
+所以这次只改**用户可见的名字**，内部键名/接口/CSS 前缀一律不动（不破坏既有配置与脚本）：
+
+- 页签 `SnowLuma` → **协议端**；页头 `SnowLuma（OneBot 网关）` → `QQ 协议端 · NapCat（OneBot v11）`，
+  后端名由服务端识别（`/api/status.snowluma.backendLabel`：NapCat / SnowLuma / OneBot）；
+- 设置页 `OneBot（SnowLuma）` → `QQ 协议端（OneBot v11）`，字段说明改成"协议端目录（留空 = 自动探测
+  项目内 snowluma/ 或本机 NapCat）"、"NapCat 通常与 WS 相同"；
+- 状态行、健康体检、顶部横幅、加载文案、日志前缀（`OneBot（SnowLuma）:` → `OneBot（协议端: NapCat）:`）
+  一并改掉；
+- **顺手修掉两处「只认老 SnowLuma」的地方**：
+  - 「WebUI」一栏原来只读老 SnowLuma 的 `config/runtime.json`（NapCat 的文件叫 `config/webui.json`），
+    于是一直显示"等待协议端启动后自动识别"；现在会读 NapCat 的 webui 配置，
+    并把它常写的 `::` / `0.0.0.0` 换成 `127.0.0.1`，本机直接显示 `http://127.0.0.1:6099/webui`；
+  - 「启动/关闭」按钮：NapCat 由 systemd 托管，这两个按钮对它是必错的
+  （老代码只认内置 SnowLuma 发行版的 `node.exe`+`index.mjs`，会回退去跑 Windows 的 `launcher.bat`）。
+  现在 `/api/status` 多给一个 `launchable`（Windows 才把 launcher.bat 算进来），
+  不可自启动时按钮直接隐藏，状态行写明「由系统服务管理（只读）」。
+
+### 修复：bili-browse（自己刷B站）加载失败
+
+症状：技能页显示「异常 · 加载失败：The requested module '../../src/prompt.js'
+does not provide an export named 'isAtMe'」。
+
+根因不是插件坏了，而是它**对着另一套宿主 API 写的**，本仓库缺了四样东西：
+
+| 插件要的 | 本仓库现状 | 处理 |
+|---|---|---|
+| `isAtMe(text, {selfNickname, botName, selfId})` | `prompt.js` 没有这个导出 | 新增（QQ 号优先、名字兜底，覆盖 CQ 码 / `@昵称(QQ:123)` / `@123` / `@昵称`） |
+| `personaForChat(chatKey)` | `config.js` 只有 `resolvePersona()` | 新增薄封装 = `resolvePersona(chatKey).persona`，优先级只在宿主一处 |
+| `onMessage` 钩子（每条消息必过） | 只有 before-context / before/after-llm… 五个钩子 | 入库后调用 `onMessage`（不 await，避免拖慢热路径） |
+| `api.storage` 键值存储 | 没有 | 新增 `data/skill-storage/<id>.json` 的 get/set/del/all |
+
+顺带补 `chatCompletion()` 的 `maxTokens` / `skillContext` 兼容（插件用它做"一句话锐评"）。
+
+结果：bili-browse 现在正常加载、注册 `bili_watch` / `bili_comment` 两个工具、
+定时挑视频的后台任务启动；「仅 @」模式也真的按宿主判定生效（未 @ 不发，@ 了才发）。
+`npm test` 全绿，新增 2 组回归：`isAtMe` 判定 13 例、`onMessage` 钩子 + `api.storage` 落盘。
+
 ## 1.1.25（2026-10-21）
 
 ### 控制台：浅色 / 深色主题切换

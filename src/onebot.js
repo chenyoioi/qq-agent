@@ -127,7 +127,7 @@ export class OneBotClient {
     });
     if (!res.ok) {
       const hint = res.status === 426
-        ? '（HTTP 426：httpUrl 可能指向了 WebSocket 端口，请检查 snowluma.httpUrl 是否为 OneBot HTTP API 地址）'
+        ? '（HTTP 426：httpUrl 可能指向了 WebSocket 端口，请检查协议端配置里的 HTTP 地址：config.snowluma.httpUrl）'
         : '';
       throw new Error(`OneBot ${action} HTTP ${res.status}${hint}`);
     }

@@ -169,6 +169,27 @@ export function createApp({ log = console.log } = {}) {
     return fs.existsSync(bundled) ? bundled : '';
   }
 
+  /**
+   * 识别"协议端"目录的形态：
+   *   · launchable —— 能不能由本进程拉起（老 SnowLuma 发行版自带 node.exe + index.mjs，
+   *     或 launcher.bat）。像本机的 NapCat（systemd 单独管）就不该在界面上给启动按钮；
+   *   · backend —— 实际跑的是什么，用于界面显示。历史命名一直叫 snowluma，
+   *     但 2026-10 起本机指向的是 NapCat（配置里 snowluma.dir 就是 NapCat 目录）。
+   */
+  function protocolBackendInfo(dir) {
+    if (!dir) return { launchable: false, backend: '', backendLabel: '' };
+    const hasBundled = fs.existsSync(path.join(dir, 'index.mjs')) && fs.existsSync(path.join(dir, 'node.exe'));
+    // launcher.bat 只有 Windows 上才算"能拉起"（Linux 上 cmd.exe 根本不存在，
+    // 而 NapCat 的发行包里也带着这个文件 —— 不判平台就会给一个点了必错的按钮）
+    const hasLauncher = process.platform === 'win32' && fs.existsSync(path.join(dir, 'launcher.bat'));
+    const launchable = hasBundled || hasLauncher;
+    let backend = 'onebot';
+    if (/napcat/i.test(dir)) backend = 'napcat';
+    else if (hasBundled || hasLauncher) backend = 'snowluma';
+    const backendLabel = backend === 'napcat' ? 'NapCat' : (backend === 'snowluma' ? 'SnowLuma' : 'OneBot');
+    return { launchable, backend, backendLabel };
+  }
+
   function snowlumaWsPort() {
     try {
       const wsUrl = String(getConfig().snowluma?.wsUrl || 'ws://127.0.0.1:3001');
@@ -178,26 +199,44 @@ export function createApp({ log = console.log } = {}) {
     return 3001;
   }
 
-  /** 从 SnowLuma 的 runtime.json 读取 WebUI 地址（http(s)://host:port/）。拿不到就返回空串。 */
+  /**
+   * 协议端 WebUI 地址。两代协议端的配置文件位置不同，挨个试：
+   *   ① 老 SnowLuma：<dir>/config/runtime.json 里写了 webuiHost/webuiPort
+   *   ② NapCat：<dir>/config/webui.json（host 常是 :: / 0.0.0.0，浏览器打不开，
+   *      统一换成 127.0.0.1 再给界面）
+   *   ③ 都没有时从最近日志里找 "listening http(s)://…" 兜底
+   */
   function snowlumaWebuiUrl() {
+    const dir = snowlumaDir();
+    if (!dir) return '';
     try {
-      const dir = snowlumaDir();
-      if (!dir) return '';
       const rtPath = path.join(dir, 'config', 'runtime.json');
-      if (!fs.existsSync(rtPath)) return '';
-      const rt = JSON.parse(fs.readFileSync(rtPath, 'utf8'));
-      const host = String(rt.webuiHost || '127.0.0.1');
-      const port = Number(rt.webuiPort) || 5099;
-      const tls = !!(rt.webuiTls && rt.webuiTls.enabled);
-      return `${tls ? 'https' : 'http'}://${host}:${port}/`;
-    } catch {
-      // 配置读不到时，从最近日志里找 "listening http(s)://…" 兜底
-      for (const line of [...snowlumaLogs].reverse()) {
-        const m = /listening\s+(https?:\/\/[\w.:-]+)/i.exec(line.text || '');
-        if (m) return m[1];
+      if (fs.existsSync(rtPath)) {
+        const rt = JSON.parse(fs.readFileSync(rtPath, 'utf8'));
+        const host = String(rt.webuiHost || '127.0.0.1');
+        const port = Number(rt.webuiPort) || 5099;
+        const tls = !!(rt.webuiTls && rt.webuiTls.enabled);
+        return `${tls ? 'https' : 'http'}://${host}:${port}/`;
       }
-      return '';
+    } catch { /* 读不到就试下一种 */ }
+    try {
+      const webuiPath = path.join(dir, 'config', 'webui.json');
+      if (fs.existsSync(webuiPath)) {
+        const w = JSON.parse(fs.readFileSync(webuiPath, 'utf8'));
+        if (w && w.disableWebUI) return '';
+        const port = Number(w?.port) || 6099;
+        const raw = String(w?.host || '').trim();
+        const host = (!raw || raw === '::' || raw === '0.0.0.0')
+          ? '127.0.0.1'
+          : (raw === '::1' ? '[::1]' : raw);
+        return `http://${host}:${port}/webui`;
+      }
+    } catch { /* 读不到就试日志 */ }
+    for (const line of [...snowlumaLogs].reverse()) {
+      const m = /listening\s+(https?:\/\/[\w.:-]+)/i.exec(line.text || '');
+      if (m) return m[1];
     }
+    return '';
   }
 
   function isPortOpen(host, port, timeoutMs = 800) {
@@ -237,9 +276,9 @@ export function createApp({ log = console.log } = {}) {
     if (!proc) return false;
     try {
       proc.kill();
-      pushSnowlumaLog('已请求关闭 SnowLuma。', 'stdout');
+      pushSnowlumaLog('已请求关闭协议端。', 'stdout');
     } catch (error) {
-      pushSnowlumaLog(`关闭 SnowLuma 失败：${error?.message ?? error}`, 'stderr');
+      pushSnowlumaLog(`关闭协议端失败：${error?.message ?? error}`, 'stderr');
       throw error;
     }
     return true;
@@ -248,10 +287,10 @@ export function createApp({ log = console.log } = {}) {
   /** 拉起 SnowLuma。优先用项目内置 node.exe 直接运行（日志进内置控制台）；失败再回退到独立窗口 launcher.bat。 */
   async function launchSnowluma() {
     const dir = snowlumaDir();
-    if (!dir) return { ok: false, error: '找不到 SnowLuma 目录：请确认项目内 snowluma/ 文件夹存在，或在设置里填写 SnowLuma 目录' };
+    if (!dir) return { ok: false, error: '找不到协议端目录：请确认项目内 snowluma/ 文件夹存在，或在设置里填写协议端目录' };
     const wsPort = snowlumaWsPort();
     if (await isPortOpen('127.0.0.1', wsPort)) {
-      pushSnowlumaLog(`SnowLuma 已在运行（端口 ${wsPort} 已就绪），无需重复启动`, 'stdout');
+      pushSnowlumaLog(`协议端已在运行（端口 ${wsPort} 已就绪），无需重复启动`, 'stdout');
       return { ok: true, alreadyRunning: true };
     }
     const indexMjs = path.join(dir, 'index.mjs');
@@ -268,7 +307,7 @@ export function createApp({ log = console.log } = {}) {
         });
         snowlumaProc = child;
         child.unref();
-        pushSnowlumaLog(`SnowLuma 启动中（内置模式，pid=${child.pid}）…`, 'stdout');
+        pushSnowlumaLog(`协议端启动中（内置模式，pid=${child.pid}）…`, 'stdout');
         child.stdout.on('data', (d) => {
           for (const line of String(d).split(/\r?\n/)) {
             if (line.trim()) pushSnowlumaLog(line, 'stdout');
@@ -281,11 +320,11 @@ export function createApp({ log = console.log } = {}) {
         });
         child.on('exit', (code, signal) => {
           snowlumaProc = null;
-          pushSnowlumaLog(`SnowLuma 进程已退出（code=${code ?? ''} signal=${signal ?? ''}）`, 'stderr');
+          pushSnowlumaLog(`协议端进程已退出（code=${code ?? ''} signal=${signal ?? ''}）`, 'stderr');
           emit('snowluma-status', { running: false, embedded: false, pid: null });
         });
         child.on('error', (error) => {
-          pushSnowlumaLog(`SnowLuma 启动失败：${error?.message ?? error}`, 'stderr');
+          pushSnowlumaLog(`协议端启动失败：${error?.message ?? error}`, 'stderr');
         });
         emit('snowluma-status', { running: true, embedded: true, pid: child.pid });
         return { ok: true, launched: true, embedded: true, pid: child.pid };
@@ -304,7 +343,7 @@ export function createApp({ log = console.log } = {}) {
       windowsHide: false // 保留 SnowLuma 自己的控制台窗口
     });
     child.unref();
-    pushSnowlumaLog('SnowLuma 已用独立控制台窗口启动（此模式下日志不进内置控制台）', 'stdout');
+    pushSnowlumaLog('协议端已用独立控制台窗口启动（此模式下日志不进内置控制台）', 'stdout');
     return { ok: true, launched: true, embedded: false };
   }
 
@@ -465,12 +504,12 @@ export function createApp({ log = console.log } = {}) {
       const cur = getConfig();
       if (cur.snowluma?.accessToken !== wsToken || cur.snowluma?.httpAccessToken !== httpToken) {
         updateConfig({ snowluma: { ...cur.snowluma, accessToken: wsToken, httpAccessToken: httpToken } });
-        log('[onebot] 已从 SnowLuma 配置同步 OneBot 访问令牌');
+        log('[onebot] 已从协议端配置同步 OneBot 访问令牌');
       }
       lastSyncTokenSig = sig;
       return true;
     } catch (error) {
-      log('[onebot] 同步 SnowLuma 令牌失败:', error?.message ?? error);
+      log('[onebot] 同步协议端令牌失败:', error?.message ?? error);
       return false;
     }
   }
@@ -572,6 +611,28 @@ export function createApp({ log = console.log } = {}) {
       replyToSelf
     });
     emit('chat-update', chatKey);
+
+    // 扩展的 onMessage 钩子：**每条**入站消息都过一遍（确定性、不经过模型）。
+    // 给"触发词 / 计数 / 素材缓存"这类插件用 —— 它们必须看到每条消息，
+    // 而 before-llm-messages 只在真正要跑模型时才触发（没被唤醒就永远看不到）。
+    // 不 await：这一行挡在入库热路径上，插件写慢了不能拖住存档与未读通知。
+    try {
+      Promise.resolve(skillManager.runHook('onMessage', {
+        chatKey,
+        kind,
+        chatId: String(id),
+        text: text || '[图片]',
+        senderId,
+        senderName,
+        atSelf,
+        replyToSelf,
+        entry: incoming,
+        sender,
+        onebot: { selfId, selfNickname: onebot.selfNickname }
+      })).catch((error) => log('[skill] onMessage 钩子失败：' + (error?.message ?? error)));
+    } catch (error) {
+      log('[skill] onMessage 钩子调用失败：' + (error?.message ?? error));
+    }
 
     // 主人「闭嘴 / 张嘴」：整体暂停或恢复说话（确定性执行，不经过模型）
     try {
@@ -725,7 +786,8 @@ export function createApp({ log = console.log } = {}) {
             dir: snowlumaDir(),
             running: await isPortOpen('127.0.0.1', snowlumaWsPort()),
             webuiUrl: snowlumaWebuiUrl(),
-            ...snowlumaStatus()
+            ...snowlumaStatus(),
+            ...protocolBackendInfo(snowlumaDir())
           },
           orchestrator: orchestrator.statusSummary(),
           usage: {
@@ -948,14 +1010,14 @@ export function createApp({ log = console.log } = {}) {
 
       if (pathname === '/api/snowluma/open-folder' && method === 'POST') {
         const dir = snowlumaDir();
-        if (!dir) return json(res, 400, { ok: false, error: '找不到 SnowLuma 目录' });
+        if (!dir) return json(res, 400, { ok: false, error: '找不到协议端目录' });
         spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
         return json(res, 200, { ok: true });
       }
 
       if (pathname === '/api/snowluma/open-webui' && method === 'POST') {
         const webuiUrl = snowlumaWebuiUrl();
-        if (!webuiUrl) return json(res, 400, { ok: false, error: '没有找到 SnowLuma WebUI 地址（等日志出现 listening 后再试）' });
+        if (!webuiUrl) return json(res, 400, { ok: false, error: '没有找到协议端 WebUI 地址（等日志出现 listening 后再试）' });
         spawn('cmd.exe', ['/c', 'start', '', webuiUrl], { detached: true, stdio: 'ignore' }).unref();
         return json(res, 200, { ok: true, webuiUrl });
       }
@@ -1916,7 +1978,10 @@ export function createApp({ log = console.log } = {}) {
     if (getConfig().scheduleNotify?.enabled !== false) scheduleNotify.start();   // 每晚课程播报调度器
     scheduledRunner.start();   // 通用定时任务调度器
     log(`控制台已就绪：http://127.0.0.1:${port}`);
-    log(`OneBot（SnowLuma）: ws=${getConfig().snowluma?.wsUrl} http=${getConfig().snowluma?.httpUrl}`);
+    {
+      const info = protocolBackendInfo(snowlumaDir());
+      log(`OneBot（协议端: ${info.backendLabel || '未识别'}）: ws=${getConfig().snowluma?.wsUrl} http=${getConfig().snowluma?.httpUrl}`);
+    }
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
     return port;
   }

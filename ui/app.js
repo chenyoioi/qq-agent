@@ -121,13 +121,13 @@ async function pollUntilReady() {
   const startedAt = Date.now();
   try {
     const status = await api('/api/status');
-    if (!status.onebot?.connected) setLoadingStatus('SnowLuma 已就绪，正在连接 OneBot…');
+    if (!status.onebot?.connected) setLoadingStatus('协议端已就绪，正在连接 OneBot…');
     else setLoadingStatus(`OneBot 已连接${status.onebot.self ? `（${status.onebot.self.nickname}）` : ''}，即将进入控制台…`);
     // 服务已可达，无需等到 OneBot 完全连上即可进入控制台（体检卡会继续提示）
     return true;
   } catch (e) {
     if (Date.now() - startedAt > 45000) {
-      setLoadingStatus('启动超时。请确认项目内 snowluma 文件夹完整，或到设置页手动启动 SnowLuma。');
+      setLoadingStatus('启动超时。请确认协议端（NapCat）在运行，或到「协议端」页签查看。');
       return false;
     }
     return false;
@@ -156,7 +156,7 @@ function assessReadiness(cfg, status) {
   const acct2 = status?.onebot?.account || {};
   const acctOffline2 = acct2.online === false;
   // 分两条报：WS 连接 / 账号在线。只报前者会把"账号掉线"判成健康（2026-09-14 事故）
-  checks.push({ ok: !!obOk, label: obOk ? `OneBot 已连接${status.onebot.self ? `（${status.onebot.self.nickname}）` : ''}` : 'OneBot（SnowLuma）未连接 —— 请到 SnowLuma 页签启动', fix: obOk ? null : 'snowluma-tab' });
+  checks.push({ ok: !!obOk, label: obOk ? `OneBot 已连接${status.onebot.self ? `（${status.onebot.self.nickname}）` : ''}` : 'OneBot 未连接 —— 请到「协议端」页签检查协议端', fix: obOk ? null : 'snowluma-tab' });
   if (obOk) {
     const mins2 = acct2.offlineMs ? Math.round(acct2.offlineMs / 60000) : 0;
     checks.push({
@@ -185,7 +185,7 @@ function renderBanner() {
     html = '⏸ 机器人已暂停，不会处理任何消息。';
   } else if (s && !s.onebot.connected && !s.onebot.everConnected) {
     show = true;
-    html = '🔌 OneBot（SnowLuma）还没连上：请确认 SnowLuma 已启动，且设置里的 WS/HTTP 地址正确。';
+    html = '🔌 OneBot 还没连上：请确认协议端（NapCat）在运行，且设置里的 WS/HTTP 地址正确。';
   }
   banner.classList.toggle('hidden', !show);
   if (show) {
@@ -1562,7 +1562,7 @@ function renderSessionDetail(s) {
   }
 }
 
-// ── SnowLuma 页签：防闪烁基础设施 ──
+// ── 协议端页签（data-tab="snowluma"，历史命名保留）：防闪烁基础设施 ──
 // 本页每 4 秒被全局定时器刷新一次。早期实现每次都 `box.innerHTML = ...` 整块重建卡片，
 // 导致二维码 <img> 与日志 <pre> 反复销毁重建、图片重复下载 → 屏幕持续闪烁。
 // 现在：骨架只建一次（事件也只绑一次），之后只"按需打补丁"更新变化的文本；
@@ -1589,7 +1589,7 @@ function buildSnowlumaSkeleton() {
   box.innerHTML = `
     <div class="snowluma-page-card">
       <div class="snowluma-head">
-        <h2>SnowLuma（OneBot 网关）</h2>
+        <h2>QQ 协议端<span class="muted sl-backend" id="sl-txt-backend"></span></h2>
         <div class="snowluma-qr" id="sl-qr-panel"></div>
       </div>
       <div class="sl-login" id="sl-login-panel"></div>
@@ -1597,7 +1597,7 @@ function buildSnowlumaSkeleton() {
       <div class="sl-accounts" id="sl-accounts-panel"></div>
       <div class="snowluma-state-row">
         <span class="dot" id="sl-dot-run"></span>
-        <span>SnowLuma：<strong id="sl-txt-run"></strong></span>
+        <span>协议端：<strong id="sl-txt-run"></strong></span>
         <span class="muted" id="sl-txt-pid"></span>
         <span class="muted" id="sl-txt-mode"></span>
       </div>
@@ -1612,8 +1612,8 @@ function buildSnowlumaSkeleton() {
         <span id="sl-webui-slot"></span>
       </div>
       <div class="snowluma-actions">
-        <button class="btn btn-primary" id="sl-start-btn">启动 SnowLuma</button>
-        <button class="btn btn-danger" id="sl-stop-btn">关闭 SnowLuma</button>
+        <button class="btn btn-primary" id="sl-start-btn">启动协议端</button>
+        <button class="btn btn-danger" id="sl-stop-btn">关闭协议端</button>
         <button class="btn btn-small" id="sl-refresh-btn">刷新状态</button>
         <button class="btn btn-small" id="sl-open-folder-btn">打开文件夹</button>
         <span id="sl-hint" class="muted" style="font-size:12px"></span>
@@ -1637,7 +1637,7 @@ function bindSnowlumaEvents() {
     setText('sl-hint', '');
     try {
       const r = await api('/api/snowluma/launch', { method: 'POST', body: '{}' });
-      setText('sl-hint', r.alreadyRunning ? 'SnowLuma 已经在运行 ✓' : (r.ok ? '已启动，日志见下方。' : ('启动失败：' + r.error)));
+      setText('sl-hint', r.alreadyRunning ? '协议端已经在运行 ✓' : (r.ok ? '已启动，日志见下方。' : ('启动失败：' + r.error)));
     } catch (e) { setText('sl-hint', '启动失败：' + e.message); }
     setTimeout(() => loadSnowlumaPage({ quiet: true }), 2500);
   });
@@ -1648,7 +1648,7 @@ function bindSnowlumaEvents() {
     setText('sl-hint', '');
     try {
       await api('/api/snowluma/stop', { method: 'POST', body: '{}' });
-      setText('sl-hint', '已请求关闭 SnowLuma。');
+      setText('sl-hint', '已请求关闭协议端。');
     } catch (e) { setText('sl-hint', '关闭失败：' + e.message); }
     setTimeout(() => loadSnowlumaPage({ quiet: true }), 1500);
   });
@@ -2138,7 +2138,8 @@ function stopSnowlumaQrTimer() {
   if (SL.qrTimer) { clearInterval(SL.qrTimer); SL.qrTimer = null; }
 }
 
-// ── SnowLuma 独立页签 ──
+// ── 协议端页签：二维码 / 登录 / 账号总览 / 日志 ──
+// 内部 id 仍叫 snowluma（配置段、接口路径、CSS 前缀都是它），只有文案改成了「协议端」。
 async function loadSnowlumaPage({ quiet = false } = {}) {
   try {
     const [status, logs] = await Promise.all([
@@ -2168,10 +2169,21 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
       const _embedded = !!_s.snowluma?.embedded;
       const _webui = _s.snowluma?.webuiUrl || '';
 
+      // 页头写实际的协议端名字（本机是 NapCat）。历史命名一律叫 SnowLuma，
+      // 但配置里的 snowluma.dir 早就指向 NapCat 目录了，界面上不该再显示旧名字。
+      const _launchable = !!_s.snowluma?.launchable;
+      // 后端名由服务端识别后给（napcat / snowluma / onebot），界面不再自己猜
+      const _backendLabel = _s.snowluma?.backendLabel
+        ? (_s.snowluma.backendLabel + '（OneBot v11）')
+        : '';
+      setText('sl-txt-backend', _backendLabel ? ' · ' + _backendLabel : '');
+
       setDot('sl-dot-run', _running);
       setText('sl-txt-run', _running ? '运行中' : '未运行');
       setText('sl-txt-pid', _pid ? ('pid ' + _pid) : '');
-      setText('sl-txt-mode', _embedded ? '内置模式（随 QQ Agent 退出）' : (_running ? '独立模式' : ''));
+      setText('sl-txt-mode', _embedded
+        ? '内置模式（随 QQ Agent 退出）'
+        : (_running ? (_launchable ? '独立模式' : '由系统服务管理（只读）') : ''));
 
       setDot('sl-dot-ob', _obOk);
       const _acct = _s.onebot?.account || {};
@@ -2187,13 +2199,13 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
       setText('sl-txt-obws', _acctOff
         ? ('账号离线 —— 扫码或检查登录' + (_acct.lastError ? ('（' + _acct.lastError + '）') : ''))
         : (_s.onebot?.error ? ('WS ：' + _s.onebot.error) : ''));
-      setText('sl-txt-dir', '目录：' + (dir || '（未找到项目内 snowluma/ 文件夹）'));
+      setText('sl-txt-dir', '目录：' + (dir || '（未找到协议端目录）'));
 
       const webSlot = slEl('sl-webui-slot');
       if (webSlot) {
         const want = _webui
-          ? ('<button class="btn btn-small" id="sl-open-webui-btn" title="在浏览器中打开 SnowLuma 控制台">' + esc(_webui) + '</button>')
-          : '<span class="muted">等待 SnowLuma 启动后自动识别…</span>';
+          ? ('<button class="btn btn-small" id="sl-open-webui-btn" title="在浏览器中打开协议端控制台（NapCat WebUI）">' + esc(_webui) + '</button>')
+          : '<span class="muted">等待协议端启动后自动识别…</span>';
         if (webSlot.innerHTML !== want) {
           webSlot.innerHTML = want;
           const b = slEl('sl-open-webui-btn');
@@ -2206,14 +2218,21 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
         }
       }
 
+      // 只有"本进程能拉起的发行版"（自带 node.exe/index.mjs 或 launcher.bat）才给按钮。
+      // NapCat 由 systemd 单独托管，这里的启动/关闭只会报错，不如直接藏掉。
       const startBtn = slEl('sl-start-btn');
       if (startBtn) {
-        const label = _running ? '已运行' : '启动 SnowLuma';
+        startBtn.hidden = !_launchable;
+        const label = _running ? '已运行' : '启动协议端';
         if (startBtn.textContent !== label) startBtn.textContent = label;
-        if (startBtn.disabled !== _running) startBtn.disabled = _running;
+        if (startBtn.disabled !== (_running || !_launchable)) startBtn.disabled = _running || !_launchable;
       }
       const stopBtn = slEl('sl-stop-btn');
-      if (stopBtn && stopBtn.disabled === _running) stopBtn.disabled = !_running;
+      if (stopBtn) {
+        stopBtn.hidden = !_launchable;
+        const want = !_running || !_launchable;
+        if (stopBtn.disabled !== want) stopBtn.disabled = want;
+      }
 
       // 日志：内容变化才写，并保持贴底滚动
       const pre = slEl('sl-logs');
@@ -2389,7 +2408,7 @@ function renderHealthCard() {
   const rows = checks.map((c) => {
     let extra = '';
     if (!c.ok && c.fix === 'snowluma-tab') {
-      extra = ' <button class="btn btn-small" id="hc-goto-snowluma">前往 SnowLuma 页签</button>';
+      extra = ' <button class="btn btn-small" id="hc-goto-snowluma">前往「协议端」页签</button>';
     }
     return `
     <div class="h-item ${c.ok ? 'ok' : 'bad'}">
@@ -2522,7 +2541,7 @@ function renderSettingsSidebar() {
     ['allow', '聊天白名单'],
     ['chat', '聊天设置'],
     ['desktop', '桌面端'],
-    ['onebot', 'OneBot（SnowLuma）']
+    ['onebot', 'OneBot（协议端）']
   ];
   sidebar.innerHTML = `
     <div class="settings-runstate">
@@ -2920,21 +2939,21 @@ function renderDesktopSection(c) {
 
 function renderOnebotSection(c) {
   return `
-    <h3 id="settings-onebot">OneBot（SnowLuma）</h3>
-    <div class="hint" style="margin-bottom:10px">SnowLuma 的启动、关闭与日志已移动到顶部「SnowLuma」页签。此处只保留连接配置。</div>
-    <div class="field"><label>SnowLuma 程序目录（留空 = 自动使用项目内 snowluma/ 文件夹）</label>
+    <h3 id="settings-onebot">QQ 协议端（OneBot v11）</h3>
+    <div class="hint" style="margin-bottom:10px">协议端的登录二维码 / 账号 / 日志在顶部「协议端」页签；此处只保留连接配置。</div>
+    <div class="field"><label>协议端目录（留空 = 自动探测项目内 snowluma/ 或本机 NapCat）</label>
       <div style="display:flex;gap:8px">
         <input type="text" id="cfg-snowlumadir" value="${esc(c.snowluma.dir || '')}" style="flex:1" />
         <button class="btn btn-small" id="open-snowluma-btn">打开文件夹</button>
       </div>
       <div class="hint" id="snowluma-hint"></div></div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-snowlumalaunch" ${c.snowluma.autoLaunch ? 'checked' : ''} />
-      <label for="cfg-snowlumalaunch">QQ Agent 启动时自动拉起 SnowLuma（未运行时）</label></div>
+      <label for="cfg-snowlumalaunch">QQ Agent 启动时自动拉起协议端（仅内置 SnowLuma 发行版可自启动）</label></div>
     <div class="field-row">
       <div class="field"><label>WebSocket 地址（收消息）</label><input type="text" id="cfg-wsurl" value="${esc(c.snowluma.wsUrl)}" /></div>
       <div class="field"><label>HTTP 地址（发消息）</label><input type="text" id="cfg-httpurl" value="${esc(c.snowluma.httpUrl)}" /></div>
       <div class="field"><label>WebSocket 令牌</label><input type="password" id="cfg-obtoken" value="${esc(c.snowluma.accessToken || '')}" /></div>
-      <div class="field"><label>HTTP 令牌（与 WS 不同时填；SnowLuma 默认分开）</label><input type="password" id="cfg-obhttptoken" value="${esc(c.snowluma.httpAccessToken || '')}" /></div>
+      <div class="field"><label>HTTP 令牌（与 WS 不同时填；NapCat 通常与 WS 相同）</label><input type="password" id="cfg-obhttptoken" value="${esc(c.snowluma.httpAccessToken || '')}" /></div>
     </div>
     <div class="hint">改完 OneBot 地址需要重启应用生效；模型/人设/白名单即时生效。</div>`;
 }
@@ -3530,7 +3549,7 @@ async function openWhitelistPicker(kind) {
     return;
   }
   if (!list?.length) {
-    $('#pick-result').textContent = isGroups ? '没拉到群列表（检查 SnowLuma）' : '没拉到好友列表';
+    $('#pick-result').textContent = isGroups ? '没拉到群列表（检查协议端）' : '没拉到好友列表';
     return;
   }
   const inputEl = $(isGroups ? '#cfg-allowgroups' : '#cfg-allowprivate');

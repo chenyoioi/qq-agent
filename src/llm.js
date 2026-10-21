@@ -15,7 +15,10 @@ function authHeaders(apiKey) {
  * 单次对话请求。messages 为 OpenAI 格式；tools 为 OpenAI function 格式（可为空）。
  * 返回 { message, usage, raw }；usage 形如 { prompt_tokens, completion_tokens, total_tokens }。
  */
-export async function chatCompletion({ messages, tools = null, toolChoice = 'auto', temperature = null, signal = null, ctx = null }) {
+export async function chatCompletion({ messages, tools = null, toolChoice = 'auto', temperature = null, maxTokens = null, signal = null, ctx = null, skillContext = null }) {
+  // skillContext 是部分插件（bili-browse 等）沿用的旧写法，语义等同 ctx：
+  // 里面装的是本次调用的 api/model/messages 等上下文，供 llm.* 能力链读取。
+  const context = ctx || skillContext || null;
   const cfg = getConfig().api;
   const body = {
     model: cfg.model,
@@ -28,13 +31,17 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   }
   const temp = temperature === null ? (cfg.temperature ?? 0.8) : temperature;
   if (temp !== null && temp !== undefined && Number.isFinite(Number(temp))) body.temperature = Number(temp);
+  // 调用方可以只要一句话（插件做"锐评"这类短输出时用），不传就不加这个字段
+  if (maxTokens !== null && maxTokens !== undefined && Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) {
+    body.max_tokens = Math.round(Number(maxTokens));
+  }
 
   // 扩展提供的请求参数转换（llm.request-params）：插件可按会话改写 tools/参数。
   // 串行执行，后者能看到前者的输出；单个插件抛错只记录，不影响请求。
   let finalBody = body;
-  for (const fn of skillManager.getRequestTransforms(ctx || {})) {
+  for (const fn of skillManager.getRequestTransforms(context || {})) {
     try {
-      const next = await fn({ body: finalBody, api: cfg, model: cfg.model, messages, tools, temperature: temp, context: ctx || {} });
+      const next = await fn({ body: finalBody, api: cfg, model: cfg.model, messages, tools, temperature: temp, context: context || {} });
       if (next && typeof next === 'object') finalBody = next.body || next;
     } catch (error) {
       skillManager.recordError('llm.request-params', error);
@@ -94,10 +101,10 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
   };
 
   // 扩展响应/用量转换（llm.response / llm.usage）：错误隔离，失败不影响主流程
-  if (ctx) {
-    for (const fn of skillManager.getResponseTransforms(ctx)) {
+  if (context) {
+    for (const fn of skillManager.getResponseTransforms(context)) {
       try {
-        const next = await fn({ result, ...ctx });
+        const next = await fn({ result, ...context });
         if (next && typeof next === 'object' && next.result) Object.assign(result, next.result);
       } catch (error) {
         skillManager.recordError('llm.response', error);
@@ -105,9 +112,9 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     }
     const extra = {};
     let hasExtra = false;
-    for (const fn of skillManager.getUsageTransforms(ctx)) {
+    for (const fn of skillManager.getUsageTransforms(context)) {
       try {
-        const add = await fn({ result, usage: result.usage, ...ctx });
+        const add = await fn({ result, usage: result.usage, ...context });
         if (add && typeof add === 'object') {
           for (const [k, v] of Object.entries(add)) {
             const n = Number(v) || 0;

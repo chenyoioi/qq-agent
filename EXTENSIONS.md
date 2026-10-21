@@ -28,6 +28,7 @@ plugins/example-hook/
 | 方法 | 说明 |
 |---|---|
 | `registerTool(def)` | 注册工具，自动加 `<skillId>__` 前缀；返回实际 id |
+| `storage` | 跨重启的键值存储（对象，不是函数）：`get(key, fallback)` / `set(key, value)` / `del(key)` / `all()`，落在 `data/skill-storage/<id>.json` |
 | `config()` | 读本扩展配置（manifest.settings 已合并）；**每次 execute 时读** |
 | `isSkillActive(id)` | 查询其他扩展是否生效 |
 | `capability(name, args)` | 软依赖：有提供者就调用，没有返回 `undefined` |
@@ -53,8 +54,22 @@ plugins/example-hook/
 | `before-tool` | 每次工具调用前 | 返回 `{ block: true, reason }` 可**否决**该次调用 |
 | `after-tool` | 工具执行后 | 记录结果、做副作用 |
 | `after-response` | 会话结束 | 统计、清理 |
+| `onMessage` | **每条入站消息**（入库后立即调用，不经过模型） | 触发词、计数、素材缓存等"必须看到每条消息"的事 |
 
 钩子有 5 秒超时，失败只记日志，不影响主流程。
+
+`onMessage` 的 ctx：`{ chatKey, kind, chatId, text, senderId, senderName, atSelf, replyToSelf, entry, sender, onebot: { selfId, selfNickname } }`。
+它是**热路径**（挡在入库后面），只能做登记 + 起后台任务，不要在里面做网络请求。
+
+### 宿主里可以直接复用的判定
+
+插件要做"是不是在 @ 我"，别自己写正则（群名片与配置名不一致时会叫不醒）：
+
+```js
+import { isAtMe } from '../../src/prompt.js';          // QQ 号优先、名字兜底
+import { personaForChat } from '../../src/config.js';  // 某会话当前生效的人设对象
+isAtMe('@小鲸鱼 出来', { selfId, selfNickname, botName });
+```
 
 ## 开关与配置
 
