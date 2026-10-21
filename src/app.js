@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { getConfig, updateConfig, ROOT, DATA_DIR } from './config.js';
+import { getConfig, updateConfig, ROOT, DATA_DIR, CONFIG_FILE } from './config.js';
 import { OneBotClient, segmentsToText, extractMediaFromSegments } from './onebot.js';
 import { ChatStore } from './store.js';
 import { MemoryStore } from './memory.js';
@@ -54,6 +54,10 @@ try {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.resolve(__dirname, '..', 'ui');
+
+// 密钥类字段名：清单里没标 secret 时的兜底判定。
+// 与 skills/manager.js 的 settingsView() 用同一套规则（含 cookie）。
+const SKILL_SECRET_KEY_RE = /key|token|secret|password|cookie/i;
 
 // ── 白名单判断（移植自原版 allowed()） ───────────────────────────────────
 function allowed(kind, id, cfg) {
@@ -106,6 +110,28 @@ export function createApp({ log = console.log } = {}) {
       visionEnabled: c.api?.vision !== false,
       searchEnabled: c.webSearch?.enabled !== false
     };
+  }
+
+  /**
+   * 扩展设置面板要用的两项元信息（/api/skills 里带出去）：
+   *   · defaults   —— 清单 settings 里声明的默认值，「恢复默认」「单字段 ↺」都取它。
+   *     configSchema 里显式写了 default 的优先（前端处理）。密文形态的默认值不回传
+   *     （理由同 settingsView：凭据不进浏览器）。
+   *   · configMtime —— 该扩展设置所在配置文件的上次修改时间。所有扩展设置都存在
+   *     data/config.json 一个文件里，所以取它的 mtime；没保存过配置的扩展不给值，
+   *     UI 就整块省略（别把"文件创建时间"当成"你改过"）。
+   */
+  function skillSettingsMeta(id, entry) {
+    const defaults = {};
+    for (const [k, v] of Object.entries(entry?.manifest?.settings || {})) {
+      defaults[k] = (typeof v === 'string' && SKILL_SECRET_KEY_RE.test(k)) ? '' : v;
+    }
+    let configMtime = null;
+    const stored = getConfig()?.skills?.[id];
+    if (stored && typeof stored === 'object') {
+      try { configMtime = Math.floor(fs.statSync(CONFIG_FILE).mtimeMs); } catch { configMtime = null; }
+    }
+    return { defaults, configMtime };
   }
 
   /**
@@ -1181,7 +1207,7 @@ export function createApp({ log = console.log } = {}) {
           const entry = skillManager.registry?.get?.(sk.id);
           let hasUi = false;
           try { hasUi = !!entry?.dir && fs.existsSync(path.join(entry.dir, 'ui')); } catch { hasUi = false; }
-          return { ...sk, hasUi };
+          return { ...sk, hasUi, ...skillSettingsMeta(sk.id, entry) };
         });
         return json(res, 200, {
           skills,

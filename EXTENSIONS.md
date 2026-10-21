@@ -59,7 +59,24 @@ plugins/example-hook/
 ## 开关与配置
 
 - 唯一开关：`config.skills[<id>].enabled`（控制台「技能」页或 `POST /api/skills/toggle`）
-- 每扩展设置：`config.skills[<id>]` 下其他键，由 `settings` / `configSchema` 声明
+- 每扩展设置：`config.skills[<id>]` 下其他键，由 `settings` / `configSchema` 声明。
+  控制台「⚙ 设置」抽屉就按 `configSchema` 渲染控件，可用的键：
+
+  | 键 | 作用 |
+  |---|---|
+  | `label` / `title` | 字段名（两种写法都认） |
+  | `description` / `hint` | 字段说明，显示在控件下方 |
+  | `type` | `boolean`（开关）/ `number`（数字）/ `string` / `enum`（下拉）/ `array`（JSON 文本域） |
+  | `values` / `options` | 枚举可选项（`select` + `options` 是早期写法，等价于 `enum` + `values`） |
+  | `default` | 该字段默认值；没写时用 `settings` 里的同名值（「↺ 恢复默认」取它） |
+  | `group` | 分组名（未写归「常规」），抽屉里按它折叠 |
+  | `multiline` | 强制多行文本域（长文本/多值列表会自动变文本域） |
+  | `secret` | 按密钥处理：密码框 + 显示/隐藏，回前端时掩码成 `******`（名字命中 key/token/cookie/secret/password 也会自动按密钥处理） |
+  | `required` | 必填，空值会拦下保存 |
+  | `min` / `max` / `step` | 数字范围与步长 |
+
+  `settings` 里有、`configSchema` 里没声明的键（如配额守卫的 `perUser`）在抽屉的
+  「其它（JSON）」高级区按 JSON 编辑，保存前会做 `JSON.parse` 校验。
 - 工具总开关：`config.tools.enabled`；分类开关 `config.tools.categories.<category>`；单工具覆盖 `config.tools.overrides.<toolId>`
 - 热重载：`config.extensions.hotReload`（默认 true），改动目录内文件自动重扫
 

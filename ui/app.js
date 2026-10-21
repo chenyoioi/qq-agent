@@ -181,7 +181,38 @@ async function resumePause({ skipBacklog = false } = {}) {
 // ── 技能（扩展）页 ──────────────────────────────────────────────
 // 数据全部来自 /api/skills 与 /api/tools；开关写 config.skills[id].enabled，
 // 与后端唯一开关来源一致（UI 不另存状态）。
+//
+// 2026-10-21 重构：卡片里不再平铺输入框。
+// 过去每个字段是裸 <input>，字段一多（点歌插件 36 项）就得在卡片里滚很久，
+// 改一个值要点一次「保存设置」，enum 还只能当文本框手打。
+// 现在卡片只留「⚙ 设置 / 启用 / 打开面板 / 卸载」，编辑全在右侧抽屉
+// （openSkillDrawer）：按 configSchema 选控件、按 group 折叠分组、
+// 就地校验、改完一次保存。卡片与抽屉共用同一份 /api/skills 数据（skillsData），
+// 保存成功后只重画那**一张**卡片，不整页重载 —— 滚动位置与搜索词都不会丢。
 let skillsBound = false;
+let skillsData = null;              // 最近一次 /api/skills 的响应
+let skillsToolsData = { total: 0, tools: [] };
+let skillsRenderDeferred = false;   // 抽屉有未保存改动时，卡片重画推迟到关闭后
+let skillQuery = '';                // 卡片搜索词：客户端过滤，不重新请求
+
+// 密钥类字段的兜底判定：清单作者忘标 secret 时按名字识别。
+// 必须与后端 settingsView() 用同一套正则，否则前端会当成普通文本渲染成明文输入框。
+const SKILL_SECRET_RE = /key|token|cookie|secret|password/i;
+
+// 抽屉的编辑态。草稿（draft）与快照（original）分开存：两者不同 = 有未保存修改。
+// original 只在「打开面板」和「保存成功」时刷新，撤销修改就是把 draft 拷回去。
+// 放在这里（而不是抽屉函数旁边）是为了让上面的 loadSkillsPage 闭包能安全引用。
+const skillDrawer = {
+  id: null,
+  skill: null,
+  fields: [],        // 字段元信息（含未声明字段，见 buildSkillFields）
+  draft: {},         // key -> 表单里的值（boolean 或 string）
+  original: {},      // key -> 打开/保存时的值
+  touched: new Set(),
+  errors: {},        // key -> 错误文案
+  collapsed: new Set(),
+  saving: false
+};
 
 async function loadSkillsPage() {
   const panel = $('#skills-panel');
@@ -192,7 +223,12 @@ async function loadSkillsPage() {
       api('/api/skills'),
       api('/api/tools').catch(() => ({ total: 0, tools: [] }))
     ]);
-    renderSkillsPage(data, tools);
+    skillsData = data;
+    skillsToolsData = tools;
+    // SSE 的 skills-changed 也会打到这里。抽屉里有未保存的改动时先记下新数据、
+    // 不重画卡片：否则用户改到一半，下面的卡片列表突然整体换了一批节点。
+    if (skillDrawer.id && skillDrawerDirty()) skillsRenderDeferred = true;
+    else renderSkillsPage(data, tools);
   } catch (e) {
     panel.innerHTML = `<div class="empty-hint">加载失败：${esc(e.message)}</div>`;
   }
@@ -205,63 +241,30 @@ async function loadSkillsPage() {
   }
 }
 
+const skillKindLabel = (sk) => (sk.kind === 'plugin' ? '确定性型' : (sk.kind === 'skill' ? 'LLM 型' : '扩展'));
+
 function renderSkillsPage(data, toolsData) {
   const panel = $('#skills-panel');
   const list = data.skills || [];
   const sum = data.summary || {};
-  const cards = list.map((sk) => {
-    const kind = sk.kind === 'plugin' ? '确定性型' : (sk.kind === 'skill' ? 'LLM 型' : '扩展');
-    const state = sk.active
-      ? '<span class="cap-ok">✅ 启用</span>'
-      : (sk.loadError ? `<span class="cap-warn">❌ ${esc(sk.loadError)}</span>` : '<span class="cap-off">⏸ 停用</span>');
-    const toolList = (sk.toolIds || []).length
-      ? sk.toolIds.map((t) => `<code>${esc(t)}</code>`).join('、')
-      : '<span class="muted">无（确定性型不注册工具）</span>';
-    const caps = (sk.capabilities || []).length
-      ? sk.capabilities.map((c) => `<code>${esc(c)}</code>`).join('、')
-      : '<span class="muted">—</span>';
-    const schema = sk.configSchema || {};
-    const fields = Object.entries(schema).map(([k, spec]) => {
-      const val = (sk.settings && sk.settings[k] !== undefined) ? sk.settings[k] : (spec?.default ?? '');
-      const label = esc(spec?.label || k);
-      if (spec?.type === 'boolean') {
-        return `<label class="skill-field"><input type="checkbox" data-key="${esc(k)}" ${val ? 'checked' : ''}> ${label}</label>`;
-      }
-      const type = spec?.type === 'number' ? 'number' : 'text';
-      return `<label class="skill-field">${label}<input type="${type}" data-key="${esc(k)}" value="${esc(String(val))}"></label>`;
-    }).join('');
-    return `<div class="skill-card" data-id="${esc(sk.id)}">
-      <div class="skill-card-head">
-        <div><b>${esc(sk.name || sk.id)}</b> <span class="skill-kind">${kind}</span> <span class="muted">v${esc(sk.version || '')}</span></div>
-        <div>${state}</div>
-      </div>
-      <div class="skill-desc">${esc(sk.description || '')}</div>
-      <div class="skill-meta">工具：${toolList}</div>
-      <div class="skill-meta">能力：${caps}</div>
-      ${fields ? `<div class="skill-settings">${fields}<button class="btn-mini" data-act="save">保存设置</button></div>` : ''}
-      <div class="skill-actions">
-        <label><input type="checkbox" data-act="toggle" ${sk.active ? 'checked' : ''}> 启用</label>
-        ${sk.hasUi ? `<button class="btn-mini" data-act="panel">打开面板</button>` : ''}
-        <button class="btn-mini" data-act="uninstall">卸载</button>
-      </div>
-    </div>`;
-  }).join('');
-
   panel.innerHTML = `
     <div class="skills-head">
       <div>
         共 <b>${sum.total ?? list.length}</b> 个扩展 · 启用 <b>${sum.active ?? 0}</b> · 停用 <b>${sum.disabled ?? 0}</b>
         · 异常 <b>${sum.broken ?? 0}</b> · 工具 常规可用 <b>${toolsData.available ?? '?'}</b> / 注册 <b>${toolsData.total ?? 0}</b>
       </div>
-      <div><button class="btn-mini" data-act="reload">重新扫描磁盘</button>
+      <div class="skills-head-tools">
+        <input id="skill-search" class="skills-search" placeholder="搜索扩展名 / 描述 / 字段名" value="${esc(skillQuery)}">
+        <button class="btn-mini" data-act="reload">重新扫描磁盘</button>
         <button class="btn-mini" data-act="install">安装扩展（zip）</button>
-        <input type="file" id="skill-zip" accept=".zip" hidden></div>
+        <input type="file" id="skill-zip" accept=".zip" hidden>
+      </div>
     </div>
     <div class="skills-hint muted">
       <b>skills/</b>（LLM 型）注册工具，模型自己判断何时用；<b>plugins/</b>（确定性型）提供能力/钩子，核心命中即执行。
       每个扩展 = 一个目录 + 清单（skill.json / plugin.json）+ index.js，放进对应目录即热重载生效。
     </div>
-    <div class="skills-list">${cards || '<div class="empty-hint">还没有安装任何扩展</div>'}</div>
+    <div class="skills-list" id="skills-list"></div>
     ${(data.uninstalled || []).length ? `<div class="skills-hint muted">配置里还有已删除的扩展记录：${data.uninstalled.map((u) => esc(u.id)).join('、')}</div>` : ''}
     <details class="tools-box" open>
       <summary>工具清单（本轮可用 <b>${toolsData.available ?? '?'}</b> / 注册 <b>${toolsData.total ?? 0}</b> 个）</summary>
@@ -273,7 +276,695 @@ function renderSkillsPage(data, toolsData) {
     </details>
   `;
   state.tools = toolsData.tools || [];
+  renderSkillCards();
   renderToolRows();
+}
+
+// ── 卡片列表（客户端过滤）──
+
+/** 卡片筛选：先匹配扩展自身信息，再下钻到字段名/字段标签/字段说明。 */
+function matchSkill(sk, q) {
+  if (!q) return { fields: [] };
+  const own = [sk.id, sk.name, sk.description || ''].join(' ').toLowerCase();
+  if (own.includes(q)) return { fields: [] };
+  const schema = sk.configSchema || {};
+  const fields = [];
+  for (const [key, spec] of Object.entries(schema)) {
+    const label = spec?.label || spec?.title || '';
+    const text = `${key} ${label} ${spec?.description || spec?.hint || ''}`.toLowerCase();
+    if (text.includes(q)) fields.push(label || key);
+  }
+  // settings 里有、schema 没声明的字段（如 quota-guard 的 perUser）也能被搜到
+  for (const key of Object.keys(sk.settings || {})) {
+    if (key === 'enabled' || key in schema) continue;
+    if (key.toLowerCase().includes(q)) fields.push(key);
+  }
+  return fields.length ? { fields } : null;
+}
+
+function skillCardHtml(sk, hit) {
+  const kind = skillKindLabel(sk);
+  const status = sk.active
+    ? '<span class="cap-ok">✅ 启用</span>'
+    : (sk.loadError ? `<span class="cap-warn">❌ ${esc(sk.loadError)}</span>` : '<span class="cap-off">⏸ 停用</span>');
+  const toolList = (sk.toolIds || []).length
+    ? sk.toolIds.map((t) => `<code>${esc(t)}</code>`).join('、')
+    : '<span class="muted">无（确定性型不注册工具）</span>';
+  const caps = (sk.capabilities || []).length
+    ? sk.capabilities.map((c) => `<code>${esc(c)}</code>`).join('、')
+    : '<span class="muted">—</span>';
+  const fieldCount = Object.keys(sk.configSchema || {}).length;
+  // 上次修改时间取自配置文件 mtime（后端给 configMtime），没有就整块省略
+  const mtime = sk.configMtime
+    ? `<span class="skill-mtime" title="data/config.json 的上次修改时间：所有扩展设置都存在这个文件里">上次修改 ${fmtTime(sk.configMtime)}</span>`
+    : '';
+  const hitHint = (hit?.fields || []).length
+    ? `<div class="skill-hit muted">命中字段：${hit.fields.slice(0, 4).map((x) => esc(x)).join('、')}${hit.fields.length > 4 ? ' …' : ''}</div>`
+    : '';
+  return `<div class="skill-card" data-id="${esc(sk.id)}">
+    <div class="skill-card-head">
+      <div class="skill-card-title"><b>${esc(sk.name || sk.id)}</b> <span class="skill-kind">${kind}</span> <span class="muted">v${esc(sk.version || '')}</span></div>
+      <div class="skill-card-state">${status}${mtime}</div>
+    </div>
+    <div class="skill-desc">${esc(sk.description || '')}</div>
+    <div class="skill-meta">工具：${toolList}</div>
+    <div class="skill-meta">能力：${caps}</div>
+    ${hitHint}
+    <div class="skill-actions">
+      <button class="btn-mini btn-accent" data-act="settings" title="打开设置面板（按分组编辑、就地校验）">⚙ 设置${fieldCount ? `（${fieldCount}）` : ''}</button>
+      <label class="skill-enable"><input type="checkbox" data-act="toggle" ${sk.active ? 'checked' : ''}> 启用</label>
+      ${sk.hasUi ? `<button class="btn-mini" data-act="panel">打开面板</button>` : ''}
+      <button class="btn-mini" data-act="uninstall">卸载</button>
+    </div>
+  </div>`;
+}
+
+function renderSkillCards() {
+  const box = $('#skills-list');
+  if (!box) return;
+  const q = skillQuery.trim().toLowerCase();
+  const rows = [];
+  for (const sk of (skillsData?.skills || [])) {
+    const hit = matchSkill(sk, q);
+    if (!hit) continue;
+    rows.push(skillCardHtml(sk, hit));
+  }
+  box.innerHTML = rows.join('')
+    || `<div class="empty-hint">${q ? `没有匹配「${esc(skillQuery.trim())}」的扩展` : '还没有安装任何扩展'}</div>`;
+}
+
+/** 只重画一张卡片：保存成功后用它，保住 .skills-pane 的滚动位置。 */
+function refreshSkillCardNode(sk) {
+  const box = $('#skills-list');
+  if (!box) return;
+  const node = [...box.querySelectorAll('.skill-card')].find((n) => n.dataset.id === sk.id);
+  if (!node) return;   // 当前搜索词把它过滤掉了，就不硬插回来
+  node.outerHTML = skillCardHtml(sk, matchSkill(sk, skillQuery.trim().toLowerCase()) || { fields: [] });
+}
+
+// ── 右上角 toast（保存/撤销等轻提示）──
+// 不用 alert：它会抢焦点，而设置面板里可能正停在密码框上。
+function showToast(text, kind = 'ok') {
+  let box = document.getElementById('toast-box');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'toast-box';
+    document.body.appendChild(box);
+  }
+  const el = document.createElement('div');
+  el.className = `toast toast-${kind}`;
+  el.textContent = text;
+  box.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('toast-out');
+    setTimeout(() => el.remove(), 240);
+  }, 1800);
+}
+
+const allDrawerFields = () => skillDrawer.fields;
+
+const prettyJson = (v) => {
+  try { return JSON.stringify(v ?? null, null, 2); } catch { return String(v ?? ''); }
+};
+
+/** 把 schema 声明 + 现值 + 默认值整理成渲染用的字段表。 */
+function buildSkillFields(sk) {
+  const schema = sk.configSchema || {};
+  const defaults = sk.defaults || {};
+  const values = sk.settings || {};
+  const has = (obj, k) => Object.prototype.hasOwnProperty.call(obj, k);
+  const fields = [];
+  for (const [key, rawSpec] of Object.entries(schema)) {
+    // 启用开关在卡片上（唯一开关来源 config.skills[id].enabled），抽屉里不重复一份
+    if (key === 'enabled') continue;
+    const spec = (rawSpec && typeof rawSpec === 'object') ? rawSpec : {};
+    // 历史清单里 token-saver 用 type:'select' + options 表达枚举，语义与 enum+values 相同；
+    // quota-guard 用 title/hint 而不是 label/description —— 两种都认，别让老扩展变瞎。
+    const options = Array.isArray(spec.values) ? spec.values : (Array.isArray(spec.options) ? spec.options : null);
+    const type = spec.type === 'boolean' ? 'boolean'
+      : spec.type === 'number' ? 'number'
+        : (spec.type === 'enum' || spec.type === 'select' || options) ? 'enum'
+          : (spec.type === 'array' || Array.isArray(spec.default)) ? 'json'
+            : 'string';
+    const hasDefault = has(spec, 'default') || has(defaults, key);
+    const def = has(spec, 'default') ? spec.default : defaults[key];
+    const value = values[key] !== undefined ? values[key] : def;
+    const secret = type === 'string' && (!!spec.secret || SKILL_SECRET_RE.test(key));
+    const len = (v) => (v === undefined || v === null ? 0 : String(v).length);
+    const strValues = [value, def].filter((v) => typeof v === 'string' && v);
+    // 多值列表（用 | 或逗号连起来、或本来就带换行）：单行 input 里改起来容易越界，同样给文本域
+    const listLike = strValues.some((v) => /[|\n]/.test(v) || v.split(',').length >= 3);
+    // 长文本：清单标了 multiline/textarea、值本身超过 60 字、或是个多值列表 —— 单行 input 会看不全
+    const multiline = type === 'string' && (!!spec.multiline || spec.type === 'textarea' || listLike || len(value) > 60 || len(def) > 60);
+    fields.push({
+      key,
+      type,
+      label: spec.label || spec.title || key,
+      description: spec.description || spec.hint || '',
+      group: String(spec.group || '').trim() || '常规',
+      values: options,
+      def,
+      hasDefault,
+      value,
+      secret,
+      masked: secret && value === '******',
+      multiline,
+      required: !!spec.required,
+      min: spec.min,
+      max: spec.max,
+      step: spec.step,
+      undeclared: false
+    });
+  }
+  // settings 里有、configSchema 没声明的字段 → 「其它（JSON）」高级区。
+  // enabled 是卡片上的开关，__ 前缀是内部字段，都不该混进来。
+  for (const key of Object.keys(values)) {
+    if (key === 'enabled' || key.startsWith('__') || has(schema, key)) continue;
+    fields.push({
+      key,
+      type: 'json',
+      label: key,
+      description: '这个字段没在 configSchema 里声明，按 JSON 编辑（保存前会校验格式）。',
+      group: '其它（JSON）',
+      values: null,
+      def: defaults[key],
+      hasDefault: has(defaults, key),
+      value: values[key],
+      secret: false,
+      masked: false,
+      multiline: false,
+      required: false,
+      undeclared: true
+    });
+  }
+  return fields;
+}
+
+function initialDraftValue(f) {
+  if (f.type === 'boolean') return !!f.value;
+  if (f.type === 'json') return prettyJson(f.value ?? {});
+  if (f.secret && f.masked) return '';   // 掩码值不放进输入框，留空 + 占位提示
+  return f.value === undefined || f.value === null ? '' : String(f.value);
+}
+
+function defaultValueFor(f) {
+  if (f.hasDefault) {
+    if (f.type === 'boolean') return !!f.def;
+    if (f.type === 'json') return prettyJson(f.def);
+    return f.def === undefined || f.def === null ? '' : String(f.def);
+  }
+  // 清单没给默认值时的中性值
+  if (f.type === 'boolean') return false;
+  if (f.type === 'json') return '{}';
+  if (f.type === 'enum') {
+    const first = f.values?.[0];
+    return String((first && typeof first === 'object') ? (first.value ?? '') : (first ?? ''));
+  }
+  return '';
+}
+
+function optionValue(v) {
+  return String((v && typeof v === 'object') ? (v.value ?? v.label ?? '') : (v ?? ''));
+}
+
+function skillFieldControl(f, value) {
+  const attrs = `data-key="${esc(f.key)}" id="skf-${esc(f.key)}"`;
+  if (f.type === 'boolean') {
+    return `<label class="skill-switch">
+      <input type="checkbox" ${attrs} ${value ? 'checked' : ''}>
+      <span class="skill-switch-track"></span>
+      <span class="skill-switch-text" data-switch-text-for="${esc(f.key)}">${value ? '已开启' : '已关闭'}</span>
+    </label>`;
+  }
+  if (f.type === 'enum') {
+    const opts = (f.values || []).map((v) => `<option value="${esc(optionValue(v))}" ${optionValue(v) === String(value) ? 'selected' : ''}>${esc((v && typeof v === 'object') ? (v.label ?? v.value ?? '') : v)}</option>`);
+    // 现值不在可选值里（清单改过而配置还是老值）：保留它，别让"打开面板点保存"顺手改掉配置
+    if (!(f.values || []).some((v) => optionValue(v) === String(value))) {
+      opts.unshift(`<option value="${esc(value)}" selected>${esc(value)}（当前值，不在可选项里）</option>`);
+    }
+    return `<select ${attrs}>${opts.join('')}</select>`;
+  }
+  if (f.type === 'json') {
+    return `<textarea ${attrs} class="skill-json" rows="4" spellcheck="false">${esc(value)}</textarea>`;
+  }
+  if (f.multiline) {
+    return `<textarea ${attrs} rows="3" spellcheck="false">${esc(value)}</textarea>`;
+  }
+  if (f.secret) {
+    return `<span class="skill-secret">
+      <input type="password" ${attrs} value="${esc(value)}" placeholder="${f.masked ? '已保存（留空 = 不修改）' : '未设置'}" autocomplete="new-password" spellcheck="false">
+      <button type="button" class="skill-eye" data-act="toggle-secret" data-key="${esc(f.key)}" title="显示 / 隐藏">👁</button>
+    </span>`;
+  }
+  const numAttrs = [
+    f.min !== undefined ? `min="${esc(f.min)}"` : '',
+    f.max !== undefined ? `max="${esc(f.max)}"` : '',
+    f.step !== undefined ? `step="${esc(f.step)}"` : ''
+  ].filter(Boolean).join(' ');
+  return `<input type="${f.type === 'number' ? 'number' : 'text'}" ${attrs} ${numAttrs} value="${esc(value)}" spellcheck="false">`;
+}
+
+function skillFieldHtml(f) {
+  const resetBtn = f.hasDefault
+    ? `<button type="button" class="skill-reset" data-act="field-reset" data-key="${esc(f.key)}" title="恢复此项默认值">↺</button>`
+    : '';
+  const tag = f.undeclared ? '<span class="skill-field-tag">未声明</span>' : '';
+  const keyHint = f.key !== f.label ? `<code class="skill-field-key">${esc(f.key)}</code>` : '';
+  return `<div class="skill-field-row" data-field="${esc(f.key)}">
+    <div class="skill-field-head">
+      <label class="skill-field-label" for="skf-${esc(f.key)}">${esc(f.label)}${f.required ? '<span class="skill-req">*</span>' : ''}${tag}</label>
+      <span class="skill-field-head-right">${keyHint}${resetBtn}</span>
+    </div>
+    ${skillFieldControl(f, skillDrawer.draft[f.key])}
+    ${f.description ? `<div class="skill-field-desc">${esc(f.description)}</div>` : ''}
+    <div class="skill-field-error" data-error-for="${esc(f.key)}"></div>
+  </div>`;
+}
+
+function skillGroupHtml(name, fields) {
+  return `<section class="skill-group" data-group="${esc(name)}">
+    <header class="skill-group-head" data-act="group-toggle" role="button" tabindex="0">
+      <span class="skill-group-arrow">▾</span><span class="skill-group-name">${esc(name)}</span>
+      <span class="skill-group-count">${fields.length} 项</span>
+    </header>
+    <div class="skill-group-body">${fields.map(skillFieldHtml).join('')}</div>
+  </section>`;
+}
+
+const drawerRoot = () => document.getElementById('skill-drawer');
+
+function findDrawerControl(key) {
+  const root = drawerRoot();
+  if (!root) return null;
+  return [...root.querySelectorAll('[data-key]')].find((el) => el.dataset.key === key && el.matches('input, select, textarea')) || null;
+}
+
+function findErrorBox(key) {
+  const root = drawerRoot();
+  if (!root) return null;
+  return [...root.querySelectorAll('[data-error-for]')].find((el) => el.dataset.errorFor === key) || null;
+}
+
+// ── 抽屉渲染 ──
+
+function drawerSubHtml(sk) {
+  const state = sk.active ? '<span class="cap-ok">✅ 已启用</span>' : '<span class="cap-off">⏸ 已停用</span>';
+  const count = allDrawerFields().filter((f) => !f.undeclared).length;
+  const mtime = sk.configMtime ? `<span class="skill-mtime">上次修改 ${fmtTime(sk.configMtime)}</span>` : '';
+  return `${state}<span class="skill-drawer-sep">·</span><span class="muted">${count} 项设置</span>${mtime}`;
+}
+
+function renderDrawerBody() {
+  const body = document.getElementById('skill-drawer-body');
+  if (!body) return;
+  const scrollTop = body.scrollTop;
+  // 分组按首次出现顺序排列（清单作者写的顺序就是语义顺序），「其它（JSON）」天然在最后
+  const groups = new Map();
+  for (const f of allDrawerFields()) {
+    if (!groups.has(f.group)) groups.set(f.group, []);
+    groups.get(f.group).push(f);
+  }
+  const html = [...groups.entries()].map(([name, fs]) => skillGroupHtml(name, fs)).join('');
+  body.innerHTML = html || '<div class="empty-hint">这个扩展没有可配置项（只受卡片上的「启用」开关控制）。</div>';
+  for (const sec of body.querySelectorAll('.skill-group')) {
+    sec.classList.toggle('collapsed', skillDrawer.collapsed.has(sec.dataset.group));
+  }
+  body.scrollTop = scrollTop;   // 重画不跳位置
+  refreshErrors();
+  updateDirtyHint();
+}
+
+function updateDirtyHint() {
+  const dirty = skillDrawerDirty();
+  const hint = document.getElementById('skill-dirty-hint');
+  if (hint) hint.hidden = !dirty;
+  const saveBtn = drawerRoot()?.querySelector('[data-act="save-settings"]');
+  if (saveBtn && !skillDrawer.saving) saveBtn.disabled = hasErrors();
+}
+
+function updateDrawerHead() {
+  const sub = document.getElementById('skill-drawer-sub');
+  if (sub && skillDrawer.skill) sub.innerHTML = drawerSubHtml(skillDrawer.skill);
+}
+
+// ── 草稿 / 校验 ──
+
+function skillDrawerDirty() {
+  for (const f of allDrawerFields()) {
+    if (!fieldValueEqual(f, skillDrawer.draft[f.key], skillDrawer.original[f.key])) return true;
+  }
+  return false;
+}
+
+function fieldValueEqual(f, a, b) {
+  if (f.type === 'json') {
+    // JSON 按"解析后的语义"比：只调整缩进/换行不算修改
+    try { return JSON.stringify(JSON.parse(a)) === JSON.stringify(JSON.parse(b)); } catch { return String(a ?? '').trim() === String(b ?? '').trim(); }
+  }
+  if (f.type === 'boolean') return !!a === !!b;
+  return String(a ?? '') === String(b ?? '');
+}
+
+function validateField(f, raw) {
+  if (f.type === 'boolean') return '';
+  const text = String(raw ?? '');
+  if (f.type === 'json') {
+    if (!text.trim()) return '';   // 留空 = 本次不提交这个字段
+    try { JSON.parse(text); } catch (e) { return `JSON 格式错误：${e.message}`; }
+    return '';
+  }
+  if (f.type === 'number') {
+    if (!text.trim()) {
+      if (f.required) return '必填';
+      // 本来有值却被清空：拦住并说清楚 —— 否则这个字段会被静默跳过，
+      // 用户以为改成功了（number input 里敲字母也会变成空串，同样落进这里）
+      return (f.value !== undefined && f.value !== null && f.value !== '') ? '请填数字（不想改就点 ↺ 恢复默认）' : '';
+    }
+    const n = Number(text);
+    if (!Number.isFinite(n)) return '请填数字';
+    if (f.min !== undefined && n < Number(f.min)) return `不能小于 ${f.min}`;
+    if (f.max !== undefined && n > Number(f.max)) return `不能大于 ${f.max}`;
+    return '';
+  }
+  if (f.required && !text.trim()) return '必填';
+  // 枚举：打开面板时若现值不在可选项里，下拉会额外插入一条"当前值"，
+  // 校验要认它，不能一打开就报错（那会白白禁用保存按钮）
+  if (f.type === 'enum' && f.values?.length && text !== String(f.value ?? '')
+    && !f.values.some((v) => optionValue(v) === text)) return '不是可选项里的值';
+  return '';
+}
+
+function validateAll() {
+  const errors = {};
+  for (const f of allDrawerFields()) {
+    const msg = validateField(f, skillDrawer.draft[f.key]);
+    if (msg) errors[f.key] = msg;
+  }
+  skillDrawer.errors = errors;
+  return errors;
+}
+
+function hasErrors() {
+  return Object.values(skillDrawer.errors).some(Boolean);
+}
+
+function refreshErrors() {
+  const errors = validateAll();
+  for (const f of allDrawerFields()) {
+    const msg = errors[f.key] || '';
+    const box = findErrorBox(f.key);
+    if (box) box.textContent = msg;
+    const row = box?.closest('.skill-field-row');
+    if (row) row.classList.toggle('has-error', !!msg);
+  }
+  const saveBtn = drawerRoot()?.querySelector('[data-act="save-settings"]');
+  if (saveBtn && !skillDrawer.saving) saveBtn.disabled = hasErrors();
+}
+
+function focusField(key) {
+  const el = findDrawerControl(key);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.focus({ preventScroll: true });
+  if (typeof el.select === 'function' && el.tagName !== 'SELECT') { try { el.select(); } catch { /* number input 不支持 select */ } }
+}
+
+function setControlValue(f, value) {
+  const el = findDrawerControl(f.key);
+  if (!el) return;
+  if (el.type === 'checkbox') {
+    el.checked = !!value;
+    const t = [...drawerRoot().querySelectorAll('[data-switch-text-for]')].find((x) => x.dataset.switchTextFor === f.key);
+    if (t) t.textContent = value ? '已开启' : '已关闭';
+  } else {
+    el.value = value;
+  }
+}
+
+// ── 抽屉交互 ──
+
+function onDrawerInput(ev) {
+  const el = ev.target;
+  const key = el?.dataset?.key;
+  if (!key || !(key in skillDrawer.draft)) return;
+  skillDrawer.draft[key] = el.type === 'checkbox' ? !!el.checked : el.value;
+  if (el.type === 'checkbox') {
+    const t = [...drawerRoot().querySelectorAll('[data-switch-text-for]')].find((x) => x.dataset.switchTextFor === key);
+    if (t) t.textContent = el.checked ? '已开启' : '已关闭';
+  }
+  skillDrawer.touched.add(key);
+  refreshErrors();      // 就地校验，不抢焦点
+  updateDirtyHint();
+}
+
+function toggleSecret(key) {
+  const el = findDrawerControl(key);
+  const btn = [...drawerRoot().querySelectorAll('[data-act="toggle-secret"]')].find((b) => b.dataset.key === key);
+  if (!el) return;
+  const show = el.type === 'password';
+  el.type = show ? 'text' : 'password';
+  if (btn) btn.textContent = show ? '🙈' : '👁';
+}
+
+function toggleGroup(section) {
+  if (!section) return;
+  const name = section.dataset.group;
+  const collapsed = !section.classList.contains('collapsed');
+  section.classList.toggle('collapsed', collapsed);
+  if (collapsed) skillDrawer.collapsed.add(name);
+  else skillDrawer.collapsed.delete(name);
+}
+
+function resetFieldToDefault(key) {
+  const f = allDrawerFields().find((x) => x.key === key);
+  if (!f) return;
+  const val = defaultValueFor(f);
+  skillDrawer.draft[key] = val;
+  skillDrawer.touched.add(key);
+  setControlValue(f, val);
+  refreshErrors();
+  updateDirtyHint();
+}
+
+function resetAllToDefaults() {
+  for (const f of allDrawerFields()) {
+    skillDrawer.draft[f.key] = defaultValueFor(f);
+    skillDrawer.touched.add(f.key);
+  }
+  renderDrawerBody();
+  showToast('已填入默认值，点「保存」生效', 'info');
+}
+
+function discardChanges() {
+  skillDrawer.draft = { ...skillDrawer.original };
+  skillDrawer.touched.clear();
+  renderDrawerBody();
+  showToast('已撤销修改', 'info');
+}
+
+function showDrawerError(msg) {
+  const bar = document.getElementById('skill-drawer-errorbar');
+  if (!bar) return;
+  bar.textContent = msg;
+  bar.hidden = !msg;
+}
+
+function setSaving(flag) {
+  skillDrawer.saving = flag;
+  const btn = drawerRoot()?.querySelector('[data-act="save-settings"]');
+  if (btn) {
+    btn.textContent = flag ? '保存中…' : '保存';
+    btn.disabled = flag || hasErrors();
+  }
+}
+
+/** 只提交这个扩展的 settings：草稿 → 后端需要的类型。 */
+function collectSkillSettings() {
+  const out = {};
+  for (const f of allDrawerFields()) {
+    const raw = skillDrawer.draft[f.key];
+    const text = String(raw ?? '');
+    if (f.type === 'boolean') { out[f.key] = !!raw; continue; }
+    if (!text.trim() && f.type !== 'string') continue;   // 空数字 / 空 JSON = 本次不改
+    if (f.type === 'json') { out[f.key] = JSON.parse(text); continue; }
+    if (f.type === 'number') { out[f.key] = Number(text); continue; }
+    if (f.type === 'enum') {
+      // 沿用清单里的原始类型：数字型枚举别被下拉框悄悄变成字符串
+      const hit = (f.values || []).find((v) => optionValue(v) === text);
+      out[f.key] = (hit && typeof hit === 'object') ? (hit.value ?? text) : (hit ?? text);
+      continue;
+    }
+    // 密文：掩码没动（输入框还是空的）就别提交，免得把 '******' 或空串写回去
+    if (f.secret && f.masked && !text.trim()) continue;
+    out[f.key] = text;
+  }
+  return out;
+}
+
+async function saveSkillSettings() {
+  if (!skillDrawer.id || skillDrawer.saving) return;
+  refreshErrors();
+  const errKeys = Object.entries(skillDrawer.errors).filter(([, m]) => m).map(([k]) => k);
+  if (errKeys.length) {
+    // 有错就地提示 + 聚焦第一个：用户不用自己找哪一项红了
+    focusField(errKeys[0]);
+    showDrawerError(`有 ${errKeys.length} 处需要修正，已定位到第一个（红线处）。`);
+    return;
+  }
+  showDrawerError('');
+  setSaving(true);
+  try {
+    const r = await api('/api/skills/config', {
+      method: 'POST',
+      body: JSON.stringify({ id: skillDrawer.id, settings: collectSkillSettings() })
+    });
+    applySavedSkill(r);
+    showToast('已保存');
+  } catch (e) {
+    // 失败保留面板与草稿：用户改的东西不能因为一次网络错误就没了
+    showDrawerError(`保存失败：${e.message}`);
+  } finally {
+    setSaving(false);
+  }
+}
+
+/** 保存成功：更新本地缓存 → 只重画这张卡片 → 刷新抽屉快照。 */
+function applySavedSkill(r) {
+  const sk = (skillsData?.skills || []).find((s) => s.id === skillDrawer.id);
+  if (!sk) return;
+  if (r?.settings) sk.settings = r.settings;
+  if (r?.skill) {
+    sk.active = !!r.skill.active;
+    sk.enabled = !!r.skill.enabled;
+    sk.loadError = r.skill.loadError || '';
+    sk.reason = r.skill.reason || sk.reason;
+  }
+  sk.configMtime = Date.now();     // 后端刚写过 config.json，等同"刚改过"
+  refreshSkillCardNode(sk);
+  // 抽屉重取值：密文字段回到掩码态、枚举/JSON 重新对齐后端，"有未保存修改"随之清掉
+  skillDrawer.skill = sk;
+  skillDrawer.fields = buildSkillFields(sk);
+  skillDrawer.draft = {};
+  for (const f of skillDrawer.fields) skillDrawer.draft[f.key] = initialDraftValue(f);
+  skillDrawer.original = { ...skillDrawer.draft };
+  skillDrawer.touched.clear();
+  renderDrawerBody();
+  updateDrawerHead();
+}
+
+function requestCloseSkillDrawer() {
+  if (skillDrawerDirty() && !confirm('设置还没保存，确定放弃修改并关闭？')) return;
+  closeSkillDrawer();
+}
+
+function closeSkillDrawer() {
+  document.removeEventListener('keydown', onDrawerKeydown);
+  document.body.classList.remove('skill-drawer-open');
+  drawerRoot()?.remove();
+  skillDrawer.id = null;
+  skillDrawer.skill = null;
+  skillDrawer.fields = [];
+  skillDrawer.draft = {};
+  skillDrawer.original = {};
+  skillDrawer.touched.clear();
+  skillDrawer.errors = {};
+  skillDrawer.collapsed.clear();
+  skillDrawer.saving = false;
+  // 抽屉期间被推迟的卡片重画，现在补上（重画会重建搜索框，值取自 skillQuery 不丢）
+  if (skillsRenderDeferred) {
+    skillsRenderDeferred = false;
+    if (skillsData) renderSkillsPage(skillsData, skillsToolsData);
+  }
+}
+
+function onDrawerClick(ev) {
+  const btn = ev.target.closest('[data-act]');
+  if (!btn) {
+    // 点遮罩空白 = 关闭；有未保存修改时同样走二次确认
+    if (ev.target.classList?.contains('skill-drawer-overlay')) requestCloseSkillDrawer();
+    return;
+  }
+  const act = btn.dataset.act;
+  if (act === 'drawer-close') return requestCloseSkillDrawer();
+  if (act === 'group-toggle') return toggleGroup(btn.closest('.skill-group'));
+  if (act === 'toggle-secret') return toggleSecret(btn.dataset.key);
+  if (act === 'field-reset') return resetFieldToDefault(btn.dataset.key);
+  if (act === 'reset-all') return resetAllToDefaults();
+  if (act === 'discard') return discardChanges();
+  if (act === 'save-settings') return saveSkillSettings();
+}
+
+// Ctrl/Cmd+S 保存、Esc 关闭（有改动先确认）。
+// 直接挂在 document 上而不是面板上：面板里焦点可能在任意控件，冒泡到 document 最稳。
+function onDrawerKeydown(ev) {
+  if (!skillDrawer.id) return;
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    requestCloseSkillDrawer();
+    return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === 's' || ev.key === 'S')) {
+    ev.preventDefault();
+    saveSkillSettings();
+    return;
+  }
+  // 分组头用 role=button，补上键盘可达性
+  if (ev.key === 'Enter' && ev.target?.classList?.contains('skill-group-head')) {
+    ev.preventDefault();
+    ev.target.click();
+  }
+}
+
+function openSkillDrawer(id) {
+  const sk = (skillsData?.skills || []).find((s) => s.id === id);
+  if (!sk) return;
+  if (skillDrawer.id) closeSkillDrawer();
+  skillDrawer.id = sk.id;
+  skillDrawer.skill = sk;
+  skillDrawer.fields = buildSkillFields(sk);
+  skillDrawer.draft = {};
+  for (const f of skillDrawer.fields) skillDrawer.draft[f.key] = initialDraftValue(f);
+  skillDrawer.original = { ...skillDrawer.draft };
+  skillDrawer.touched.clear();
+  skillDrawer.errors = {};
+  skillDrawer.collapsed.clear();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'skill-drawer-overlay';
+  overlay.id = 'skill-drawer';
+  overlay.innerHTML = `
+    <aside class="skill-drawer" role="dialog" aria-modal="true" aria-label="扩展设置">
+      <header class="skill-drawer-head">
+        <div class="skill-drawer-title-box">
+          <div class="skill-drawer-title">
+            <b>${esc(sk.name || sk.id)}</b>
+            <span class="skill-kind">${skillKindLabel(sk)}</span>
+            <span class="muted">v${esc(sk.version || '')}</span>
+          </div>
+          <div class="skill-drawer-sub" id="skill-drawer-sub">${drawerSubHtml(sk)}</div>
+        </div>
+        <button type="button" class="skill-drawer-close" data-act="drawer-close" title="关闭（Esc）">✕</button>
+      </header>
+      <div class="skill-drawer-body" id="skill-drawer-body"></div>
+      <div class="skill-drawer-errorbar" id="skill-drawer-errorbar" hidden></div>
+      <footer class="skill-drawer-foot">
+        <span class="skill-dirty" id="skill-dirty-hint" hidden>● 有未保存修改</span>
+        <div class="skill-drawer-foot-right">
+          <button type="button" class="btn-mini" data-act="reset-all" title="把所有字段填回清单默认值（点「保存」才生效）">恢复默认</button>
+          <button type="button" class="btn-mini" data-act="discard" title="丢弃本次修改，回到打开面板时的值">撤销修改</button>
+          <button type="button" class="btn btn-small btn-primary" data-act="save-settings" title="保存（Ctrl/Cmd + S）">保存</button>
+        </div>
+      </footer>
+    </aside>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', onDrawerClick);
+  overlay.addEventListener('input', onDrawerInput);
+  overlay.addEventListener('change', onDrawerInput);
+  document.addEventListener('keydown', onDrawerKeydown);
+  // 锁定背景滚动：抽屉内部自己滚，背景别跟着动
+  document.body.classList.add('skill-drawer-open');
+  renderDrawerBody();
+  overlay.querySelector('.skill-drawer-close')?.focus();
 }
 
 // ── 工具清单渲染（客户端过滤，不重新请求）──
@@ -338,6 +1029,12 @@ async function onSkillsChange(ev) {
     }
     return;
   }
+  // 卡片搜索：过滤扩展名/描述/字段名，纯客户端，不重新请求
+  if (ev.target.id === 'skill-search') {
+    skillQuery = ev.target.value || '';
+    renderSkillCards();
+    return;
+  }
   // 工具清单：搜索 / 只看不可用 / 单项开关
   if (ev.target.id === 'tool-search') { toolSearch = ev.target.value || ''; renderToolRows(); return; }
   if (ev.target.id === 'tool-only-unavailable') { toolOnlyUnavailable = !!ev.target.checked; renderToolRows(); return; }
@@ -388,6 +1085,10 @@ async function onSkillsClick(ev) {
       if (input) input.click();
       return;
     }
+    if (act === 'settings') {
+      openSkillDrawer(id);
+      return;
+    }
     if (act === 'panel') {
       window.open(`/plugin-ui/${encodeURIComponent(id)}/index.html`, '_blank');
       return;
@@ -397,16 +1098,6 @@ async function onSkillsClick(ev) {
       await api('/api/skills/uninstall', { method: 'POST', body: JSON.stringify({ id }) });
       await loadSkillsPage();
       return;
-    }
-    if (act === 'save') {
-      const settings = {};
-      $$('[data-key]', card).forEach((inp) => {
-        settings[inp.dataset.key] = inp.type === 'checkbox'
-          ? inp.checked
-          : (inp.type === 'number' ? Number(inp.value) : inp.value);
-      });
-      await api('/api/skills/config', { method: 'POST', body: JSON.stringify({ id, settings }) });
-      await loadSkillsPage();
     }
   } catch (e) {
     alert('操作失败：' + e.message);
