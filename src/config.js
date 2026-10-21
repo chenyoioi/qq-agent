@@ -141,7 +141,10 @@ export const DEFAULT_CONFIG = {
   replyPolicy: {
     enabled: true,
     keywords: ['大肥鱼', '小鲸鱼', 'DeepSeek'],
-    otherProbability: 0.03
+    otherProbability: 0.03,
+    // 主人闲聊的放行概率（@/引用/叫名字仍然必回）。
+    // 以前主人绕过门禁 → 主人说一句她回一句，很机械；0.35 大约三句接一句。
+    masterProbability: 0.35
   },
   // 扩展系统（skills/ + plugins/）
   //   skills[id]    每个 Skill/Plugin 的开关与设置（唯一开关来源）

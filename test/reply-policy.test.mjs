@@ -50,4 +50,20 @@ ok('@ 判定（isAtMe）按 QQ 号优先、名字兜底');
 assert.equal(shouldWakeForReply([{ senderId: '1', text: '无关内容' }], { ...policy, enabled: false }, [], () => 0.99), true);
 ok('enabled=false 时不拦截（回到旧行为）');
 
+// ── 主人闲聊门禁：不再"主人说一句她回一句"，但 @/引用/叫名字仍然必回 ──
+const { shouldWakeForMasterChatter } = await import('../src/orchestrator.js');
+const masterPolicy = { enabled: true, keywords: ['大肥鱼'], otherProbability: 0.03, masterProbability: 0.35 };
+// 随机数 0.9 > 0.35 → 不唤醒
+assert.equal(shouldWakeForMasterChatter([{ senderId: '9', text: '今天好累' }], masterPolicy, ['小鲸鱼'], () => 0.9), false, '主人闲聊按概率可以被跳过');
+// 随机数 0.1 < 0.35 → 唤醒
+assert.equal(shouldWakeForMasterChatter([{ senderId: '9', text: '今天好累' }], masterPolicy, ['小鲸鱼'], () => 0.1), true, '概率内照常唤醒');
+// 硬命中一律放行，与随机数无关
+assert.equal(shouldWakeForMasterChatter([{ senderId: '9', text: '@小鲸鱼 在吗', atSelf: true }], masterPolicy, ['小鲸鱼'], () => 0.99), true, '@ 我必回');
+assert.equal(shouldWakeForMasterChatter([{ senderId: '9', text: '回我这句', replyToSelf: true }], masterPolicy, ['小鲸鱼'], () => 0.99), true, '引用我必回');
+assert.equal(shouldWakeForMasterChatter([{ senderId: '9', text: '小鲸鱼你说呢' }], masterPolicy, ['小鲸鱼'], () => 0.99), true, '叫名字必回');
+// 概率可调到 0（只回点名）与 1（句句回）
+assert.equal(shouldWakeForMasterChatter([{ senderId: '9', text: '嗯' }], { ...masterPolicy, masterProbability: 0 }, [], () => 0.0), false, '概率 0 → 闲聊不接');
+assert.equal(shouldWakeForMasterChatter([{ senderId: '9', text: '嗯' }], { ...masterPolicy, masterProbability: 1 }, [], () => 0.99), true, '概率 1 → 句句回');
+ok('主人闲聊门禁（@/引用/叫名字必回，其余按 masterProbability）');
+
 console.log(`\n回复门禁 ${pass} 项检查通过 ✅`);

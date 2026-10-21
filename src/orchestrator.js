@@ -44,6 +44,32 @@ export function shouldWakeForReply(entries, policy = {}, names = [], rand = Math
   return rand() < prob;
 }
 
+/**
+ * 主人闲聊门禁（群聊）。
+ *
+ * 背景：以前主人在群里说任何话都绕过回复门禁（`if (!fromMaster && ...)`），
+ * 结果"主人说一句、她回一句"，很机械。现在除硬命中（@我/引用我/叫名字）之外，
+ * 主人的日常闲聊也按概率放行；该门禁只在群聊生效，私聊仍然必回。
+ *
+ * 主人指令（重置额度、开关扩展…）在这之前就由 masterCommandHandler 消化掉了，
+ * 不会走到这里，所以调低概率不会吞指令。
+ *
+ * @returns {boolean} true = 放行（唤起一次运行）
+ */
+export function shouldWakeForMasterChatter(entries, policy = {}, names = [], rand = Math.random) {
+  if (policy.enabled === false) return true;
+  const strong = (entries || []).some((m) => {
+    if (!m) return false;
+    if (m.atSelf || m.replyToSelf) return true;
+    const text = String(m.text || '').toLowerCase();
+    return names.some((n) => n && text.includes(String(n).toLowerCase()));
+  });
+  if (strong) return true;
+  const raw = Number(policy.masterProbability ?? 0.35);
+  const prob = Math.max(0, Math.min(1, Number.isFinite(raw) ? raw : 0.35));
+  return rand() < prob;
+}
+
 export function alreadySent(session, text) {
   const norm = String(text || '').replace(/\s+/g, '').trim();
   if (!norm) return true;
@@ -301,7 +327,7 @@ export class Orchestrator {
     if (!proactive && parseChatKey(runKey).kind === 'group' && triggerEntries.length) {
       const policy = getConfig().replyPolicy || {};
       const names = [getConfig().persona?.botName, this.onebot?.selfNickname].filter(Boolean);
-      // 主人不受门禁限制（否则「重置 12345」这类指令会被直接吞掉）
+      // 主人指令在这之前已由 masterCommandHandler 消化；这里只判断要不要为她这句话开一次运行
       const masterQq = String(getConfig().persona?.masterQQ || '').trim();
       fromMaster = !!masterQq && triggerEntries.some((m) => String(m?.senderId ?? '') === masterQq);
       // 主人发言触发的回复不受发送限流限制：群里再吵，他这句话也发得出去
@@ -312,7 +338,12 @@ export class Orchestrator {
         const text = String(m?.text || '').toLowerCase();
         return names.some((n) => n && text.includes(String(n).toLowerCase()));
       });
-      if (!fromMaster && !shouldWakeForReply(triggerEntries, policy, names)) return;
+      // 主人不再句句必回：硬命中（@/引用/叫名字）照旧放行，其余闲聊过概率门禁
+      if (fromMaster) {
+        if (!strongHit && !shouldWakeForMasterChatter(triggerEntries, policy, names)) return;
+      } else if (!shouldWakeForReply(triggerEntries, policy, names)) {
+        return;
+      }
     }
 
     this.runningChats.add(runKey);

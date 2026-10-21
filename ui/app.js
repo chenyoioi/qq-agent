@@ -2945,6 +2945,12 @@ function renderChatSection(c) {
         <input type="number" id="cfg-reply-prob" step="0.01" min="0" max="1" value="${esc(c.replyPolicy?.otherProbability ?? 0.15)}" />
         <div class="hint">没被 @、没提关键词时，有多大概率还是接一句。0 = 只在叫它时说话。</div></div>
     </div>
+    <div class="field-row">
+      <div class="field"><label>主人闲聊放行概率 0~1</label>
+        <input type="number" id="cfg-reply-master-prob" step="0.01" min="0" max="1" value="${esc(c.replyPolicy?.masterProbability ?? 0.35)}" />
+        <div class="hint">主人在群里随便说话时，有多大概率接一句（@ 你 / 引用你 / 叫你名字仍然必回）。
+          默认 0.35 ≈ 三句接一句；调成 0 就是"主人闲聊也不接，只回点名"。</div></div>
+    </div>
 
     <h3>发送保护</h3>
     <div class="field-row">
@@ -3705,7 +3711,8 @@ async function saveConfig({ quiet = false } = {}) {
       ...(c.replyPolicy || {}),
       enabled: chk('#cfg-reply-enabled', c.replyPolicy?.enabled !== false),
       keywords: parseList(val('#cfg-reply-keywords', (c.replyPolicy?.keywords || []).join(','))),
-      otherProbability: Math.min(1, Math.max(0, Number(val('#cfg-reply-prob', c.replyPolicy?.otherProbability ?? 0.15))))
+      otherProbability: Math.min(1, Math.max(0, Number(val('#cfg-reply-prob', c.replyPolicy?.otherProbability ?? 0.15)))),
+      masterProbability: Math.min(1, Math.max(0, Number(val('#cfg-reply-master-prob', c.replyPolicy?.masterProbability ?? 0.35))))
     };
     patch.sticker = { ...c.sticker, enabled: chk('#cfg-sticker', c.sticker?.enabled !== false) };
     patch.store = {
