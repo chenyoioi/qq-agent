@@ -24,6 +24,9 @@
 - **`.gitignore` 补漏**：`data/gallery-mirror/`（2.3GB 图库镜像）、`data/quota-guard/`（额度账本）、
   `data/sticker-cadence/`、`data/sukuna-raid/`、`data/hot-trends.json`、`data/persona-*.md`
   等等此前**没被忽略** —— 一次 `git add -A` 就会把用户数据和 2GB 缓存提交进仓库；
+- **`data/config.json` 权限收紧到 600**：这份文件里有模型 Key、协议端令牌、B 站 cookie，
+  此前按默认 umask 写成 `644`（同机其它用户可读）。现在落盘即以 `mode: 0o600` 写入并 chmod，
+  已有文件也已改为 600；
 - **`_N` 目录名归一**：清理重复副本后保留的目录叫 `voxcpm-voice_1`、`early-finish_3`，
   而配置里的绝对路径写的是 `skills/voxcpm-voice/assets/reference.wav` ——
   改名后路径才对得上（`POST /api/skills/dedupe` 现在会顺带改名；迁移导入也会做）。

@@ -201,8 +201,11 @@ export function updateConfig(patch) {
   currentConfig = deepMerge(getConfig(), patch);
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = `${CONFIG_FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(currentConfig, null, 2), 'utf8');
+  // 0o600：这份文件里有模型 Key、协议端令牌、B 站 cookie。默认 umask 会写成 644，
+  // 同机其它用户能直接读走 —— 落盘时就收紧，别等出事再 chmod。
+  fs.writeFileSync(tmp, JSON.stringify(currentConfig, null, 2), { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(tmp, CONFIG_FILE);
+  try { fs.chmodSync(CONFIG_FILE, 0o600); } catch { /* 某些文件系统不支持，忽略 */ }
   return currentConfig;
 }
 
@@ -218,8 +221,9 @@ export function scheduleConfigSave() {
     try {
       fs.mkdirSync(DATA_DIR, { recursive: true });
       const tmp = `${CONFIG_FILE}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(getConfig(), null, 2), 'utf8');
+      fs.writeFileSync(tmp, JSON.stringify(getConfig(), null, 2), { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(tmp, CONFIG_FILE);
+      try { fs.chmodSync(CONFIG_FILE, 0o600); } catch { /* 同上 */ }
     } catch (error) {
       console.error('[config] 保存失败:', error);
     }
