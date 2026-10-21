@@ -30,12 +30,12 @@ import { QrRefreshGuard } from './qr-refresh-guard.js';
 import { OneBotHealth } from './onebot-health.js';
 import { ScheduledTaskRunner } from './scheduled-tasks.js';
 import { createEventBus, todayKey } from './util.js';
-import { loadPlugins, watchPlugins, unloadSkill, SKILL_DIRS } from './plugin-loader.js';
+import { loadPlugins, watchPlugins, unloadSkill, listInstalledDirs, SKILL_DIRS } from './plugin-loader.js';
 import { skillManager, looksLikeSecretKey } from './skills/manager.js';
 import { setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
 import { listTools, getToolAvailability } from './tool-registry.js';
 import { KB_TOOL_NAMES } from './tools.js';
-import { validateZipStructure, unzipToModuleDir } from './zip-install.js';
+import { validateZipStructure, unzipToModuleDir, readZipManifest, findModuleDirsById } from './zip-install.js';
 
 // 全局 fetch（undici）默认连接建立超时只有 10 秒，openrouter.ai 这类海外端点
 // 握手慢时会直接报 "Connect Timeout Error ... timeout: 10000ms"（注意这不是
@@ -1267,11 +1267,32 @@ export function createApp({ log = console.log } = {}) {
           try { hasUi = !!entry?.dir && fs.existsSync(path.join(entry.dir, 'ui')); } catch { hasUi = false; }
           return { ...sk, hasUi, ...skillSettingsMeta(sk.id, entry) };
         });
+        // 同 id 多份副本：老版安装器遇到同名目录就递增后缀（foo/foo_1/foo_2），
+        // 加载器同 id 后者覆盖前者 —— 卡片只有一张，用户以为"装了没显示"。
+        // 这里把重复列出来，界面可以提示并一键清理。
+        const duplicates = [];
+        try {
+          const byId = new Map();
+          for (const d of listInstalledDirs()) {
+            if (!d.id) continue;
+            if (!byId.has(d.id)) byId.set(d.id, []);
+            byId.get(d.id).push(d);
+          }
+          for (const [id, dirs] of byId) {
+            if (dirs.length < 2) continue;
+            duplicates.push({
+              id,
+              dirs: dirs.map((d) => d.relDir),
+              active: skillManager.registry?.get?.(id)?.relDir || ''
+            });
+          }
+        } catch { /* 列目录失败不影响主流程 */ }
         return json(res, 200, {
           skills,
           summary: skillManager.summary(context),
           capabilities: skillManager.capabilities.list().sort(),
-          uninstalled
+          uninstalled,
+          duplicates
         });
       }
 
@@ -1336,6 +1357,40 @@ export function createApp({ log = console.log } = {}) {
         return json(res, 200, { ok: true, skill: skillManager.status(id, skillRuntimeContext()), settings: skillManager.settingsView(id) });
       }
 
+      // 清理重复副本：同一个 id 只保留"当前生效"的那个目录，其余删掉
+      if (pathname === '/api/skills/dedupe' && method === 'POST') {
+        const byId = new Map();
+        try {
+          for (const d of listInstalledDirs()) {
+            if (!d.id) continue;
+            if (!byId.has(d.id)) byId.set(d.id, []);
+            byId.get(d.id).push(d);
+          }
+        } catch (error) {
+          return json(res, 500, { ok: false, error: String(error?.message ?? error) });
+        }
+        const removed = [];
+        for (const [id, dirs] of byId) {
+          if (dirs.length < 2) continue;
+          const activeRel = skillManager.registry?.get?.(id)?.relDir || '';
+          const keep = dirs.find((d) => d.relDir === activeRel) || dirs[dirs.length - 1];
+          for (const d of dirs) {
+            if (d === keep) continue;
+            try {
+              fs.rmSync(d.dir, { recursive: true, force: true });
+              removed.push(d.relDir);
+            } catch (error) {
+              log(`[skill] 清理重复副本失败 ${d.relDir}：${error?.message ?? error}`);
+            }
+          }
+        }
+        if (removed.length) {
+          await reloadSkills({ reason: 'dedupe' });
+          emit('skills-changed', { at: Date.now() });
+        }
+        return json(res, 200, { ok: true, removed });
+      }
+
       // 安装：body { filename, dataBase64, type?: 'skill'|'plugin' }
       if (pathname === '/api/skills/install' && method === 'POST') {
         try {
@@ -1345,26 +1400,55 @@ export function createApp({ log = console.log } = {}) {
           const buf = Buffer.from(b64, 'base64');
           // 类型判定：显式指定 > 按安装包里的清单自动识别（plugin.json = 确定性型）
           let type = null;
-          if (body.type === 'plugin' || body.type === 'skill') {
-            type = body.type;
-          } else {
+          let entries = null;
+          try {
+            entries = validateZipStructure(buf);
+            const names = entries.map((e) => e.name);
+            const hasPlugin = names.some((n) => /(^|\/)plugin\.json$/i.test(n));
+            const hasSkill = names.some((n) => /(^|\/)skill\.json$/i.test(n));
+            type = (hasPlugin && !hasSkill) ? 'plugin' : 'skill';
+          } catch {
+            type = 'skill';   // 结构校验会由 unzipToModuleDir 再抛一次，这里只决定目录
+          }
+          if (body.type === 'plugin' || body.type === 'skill') type = body.type;
+
+          // 先从包里认出 manifest.id：重装同一个扩展必须落到**同一个目录**，
+          // 否则会攒出 foo/foo_1/foo_2 一堆副本，而界面上只有一张卡片
+          // —— 那正是"提示安装成功、却看不到新东西"的根因。
+          const peek = entries ? readZipManifest(entries) : null;
+          const wantedId = String(peek?.manifest?.id || body.id || '').trim();
+          const existing = wantedId ? findModuleDirsById(ROOT, wantedId) : [];
+          // 已有安装：沿用它的目录类型（同一个扩展不该既在 skills/ 又在 plugins/），
+          // 并删掉旧目录（含历史遗留的 _1/_2 副本）
+          // existing[].type 是目录名（skills/plugins），这里换回单数（skill/plugin）
+          if (existing.length) type = existing[0].type === 'plugins' ? 'plugin' : 'skill';
+          const replaced = [];
+          for (const e of existing) {
             try {
-              const entries = validateZipStructure(buf);
-              const names = entries.map((e) => e.name);
-              const hasPlugin = names.some((n) => /(^|\/)plugin\.json$/i.test(n));
-              const hasSkill = names.some((n) => /(^|\/)skill\.json$/i.test(n));
-              type = (hasPlugin && !hasSkill) ? 'plugin' : 'skill';
-            } catch {
-              type = 'skill';   // 结构校验会由 unzipToModuleDir 再抛一次，这里只决定目录
+              fs.rmSync(e.dir, { recursive: true, force: true });
+              replaced.push(`${e.type}/${e.name}`);
+            } catch (error) {
+              log(`[skill] 覆盖安装：删除旧目录失败 ${e.type}/${e.name}：${error?.message ?? error}`);
             }
           }
-          const dirName = await unzipToModuleDir(buf, { root: ROOT, type, preferId: String(body.id || '') });
+          if (replaced.length) log(`[skill] 覆盖安装 ${wantedId}：已移除旧目录 ${replaced.join('、')}`);
+
+          const dirName = await unzipToModuleDir(buf, { root: ROOT, type, preferId: wantedId });
           const result = await reloadSkills({ reason: 'install' });
+          const installedId = String(wantedId || dirName);
+          const installedFailed = result.failed.find((r) => r.id === installedId);
+          const loadError = installedFailed?.error || '';
           return json(res, 200, {
             ok: true,
             type,
+            id: installedId,
+            name: String(peek?.manifest?.name || installedId),
+            version: String(peek?.manifest?.version || ''),
             dir: `${type === 'plugin' ? 'plugins' : 'skills'}/${dirName}`,
-            loaded: result.loaded.map((r) => r.id),
+            replaced,
+            loadError,
+            // 兼容旧前端：全量已加载/失败，但按 id 去重（重复副本会刷出一长串同名）
+            loaded: [...new Set(result.loaded.map((r) => r.id))],
             failed: result.failed.map((r) => ({ id: r.id, error: r.error }))
           });
         } catch (error) {

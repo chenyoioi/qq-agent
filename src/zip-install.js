@@ -26,14 +26,77 @@ export function validateZipStructure(buffer) {
   return entries;
 }
 
+const MANIFEST_RE = /(^|\/)(skill|plugin)\.json$/i;
+
+/**
+ * 读安装包里的清单（取层级最浅的那个），返回清单内容 + 它所在的目录前缀。
+ *
+ * 为什么要"最浅"：市场包至少有三种打法规格 ——
+ *   · `<id>/skill.json`                （服务端标准包）
+ *   · `skill.json`                     （直接压目录内容）
+ *   · `<包名>/dist/skill.json`          （先 build 再打包；`dist` 不能被当成源码目录剥掉）
+ * 只有把"清单所在目录"当作包根，装出来的目录根上才有清单，加载器才认得出这个扩展。
+ * 否则会出现"提示安装成功、界面上却看不到"——目录装进去了，但清单在更深一层。
+ */
+export function readZipManifest(entries) {
+  const cands = (entries || [])
+    .map((e) => ({ ...e, depth: String(e.name).split('/').length }))
+    .filter((e) => MANIFEST_RE.test(String(e.name)))
+    .sort((a, b) => a.depth - b.depth);
+  for (const c of cands) {
+    try {
+      const raw = JSON.parse(String(c.data.toString('utf8')).replace(/^\uFEFF/, ''));
+      if (raw && typeof raw === 'object') {
+        const idx = String(c.name).lastIndexOf('/');
+        return { manifest: raw, file: c.name, prefix: idx === -1 ? '' : String(c.name).slice(0, idx + 1) };
+      }
+    } catch { /* 坏清单就找下一个 */ }
+  }
+  return null;
+}
+
+/**
+ * 找出 skills/ 与 plugins/ 下所有"清单 id === id"的目录（含 `_1` `_2` 这种重复副本）。
+ *
+ * 安装器过去遇到同名目录就递增后缀，于是同一个扩展会攒出好几份副本：
+ * 加载器按目录逐个加载、同 id 后者覆盖前者 —— 界面上永远只有一张卡片，
+ * 用户看到"安装成功"却找不到新东西，磁盘上还多了一堆没人用的副本。
+ */
+export function findModuleDirsById(root, id) {
+  const want = String(id ?? '').trim();
+  if (!want) return [];
+  const out = [];
+  for (const type of ['skills', 'plugins']) {
+    const baseDir = path.join(root, type);
+    let names = [];
+    try {
+      names = fs.readdirSync(baseDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch { continue; }
+    for (const name of names) {
+      const dir = path.join(baseDir, name);
+      let mid = '';
+      for (const mf of ['skill.json', 'plugin.json']) {
+        try {
+          mid = String(JSON.parse(fs.readFileSync(path.join(dir, mf), 'utf8')).id || '');
+          if (mid) break;
+        } catch { /* 没有这个清单 */ }
+      }
+      if (mid === want) out.push({ type, name, dir });
+    }
+  }
+  return out;
+}
+
 /**
  * 解压安装到 <root>/skills/ 或 <root>/plugins/ 下的一个目录。
  *
- * 目录名规则：
- *   · zip 里通常有一层与包同名的根目录（服务端打包格式 `<id>/...`），剥掉它
- *   · 没有统一根目录时用 preferId（服务器告知的 id）
- *   · 与本地已有目录冲突 → 自动 _1/_2（重装场景：同 id 覆盖会丢用户改动，
- *     而且插件热重载正在 watch 旧目录，覆盖写一半会加载出半截代码）
+ * 目录名规则（按优先级）：
+ *   · 清单里的 id（最稳：与加载器认的 id 一致，重复安装会落到同一目录）
+ *   · zip 里统一的根目录名
+ *   · preferId（调用方告知的 id）
+ *   · 兜底 'module'
+ * 清单所在的层级会被剥掉（见 readZipManifest），保证**落地目录根上就是清单**。
+ * 目录已存在且属于别的 id → 递增 _1/_2（两个不同扩展恰好同名目录，不能互相覆盖）。
  *
  * @returns {Promise<string>} 实际落地的目录名
  */
@@ -41,6 +104,7 @@ export async function unzipToModuleDir(buffer, { root, type, preferId = '' }) {
   const entries = validateZipStructure(buffer);
   if (!entries.length) throw new Error('安装包是空的');
   const baseDir = path.join(root, type === 'plugin' ? 'plugins' : 'skills');
+  const found = readZipManifest(entries);
 
   // 剥统一根目录：所有条目共享同一个第一段时去掉它。
   // 允许连续嵌套（常见于 GitHub「Download ZIP」后再打一层包）：
@@ -48,22 +112,35 @@ export async function unzipToModuleDir(buffer, { root, type, preferId = '' }) {
   // 遇到源码/资源目录名就停，避免把 lib/、src/ 当成包根。
   const STOP_SEG = new Set(['lib', 'src', 'assets', 'static', 'dist', 'node_modules']);
   const names = entries.map((e) => e.name);
-  const firstSeg = names[0].split('/')[0];
-  let strip = 0;
-  for (let round = 0; round < 3; round++) {
-    const rest = names.map((n) => n.slice(strip));
-    const seg = rest[0].split('/')[0];
-    const uniform = seg && !STOP_SEG.has(seg.toLowerCase()) && rest.every((n) => n.startsWith(seg + '/'));
-    if (!uniform) break;
-    strip += seg.length + 1;
+  // ① 有清单：以"清单所在目录"为包根，只取这一层下的文件（覆盖 dist/ 这类布局）
+  let cut = 0;                       // 要剥掉多少字符
+  let picked = entries;
+  if (found?.prefix) {
+    cut = found.prefix.length;
+    picked = entries.filter((e) => String(e.name).startsWith(found.prefix));
+    if (!picked.length) throw new Error('安装包结构异常：清单所在目录为空');
+  } else {
+    // ② 没有清单：退回"剥统一根目录"，让加载器给出"缺少清单"的明确报错
+    const firstSeg = names[0].split('/')[0];
+    for (let round = 0; round < 3; round++) {
+      const rest = names.map((n) => n.slice(cut));
+      const seg = rest[0].split('/')[0];
+      const uniform = seg && !STOP_SEG.has(seg.toLowerCase()) && rest.every((n) => n.startsWith(seg + '/'));
+      if (!uniform) break;
+      cut += seg.length + 1;
+    }
   }
-  const relNames = names.map((n) => n.slice(strip));
+  const relNames = picked.map((e) => String(e.name).slice(cut));
   if (relNames.some((n) => !n)) throw new Error('安装包结构异常（剥掉根目录后有条目为空）');
 
-  // 落地目录名：优先 zip 根目录名，其次 preferId
-  let dirName = strip ? firstSeg : (preferId || 'module');
+  // 落地目录名：清单 id > zip 根目录名 > preferId > module
+  const firstSeg = names[0].split('/')[0];
+  const manifestId = String(found?.manifest?.id || '').trim();
+  const zipRoot = found?.prefix ? found.prefix.split('/')[0] : (cut > 0 ? firstSeg : '');
+  let dirName = manifestId || zipRoot || preferId || 'module';
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(dirName)) dirName = preferId || 'module';
-  // 冲突递增
+  // 冲突递增：走到这里说明磁盘上已有同名目录且不属于同一个 id
+  // （同一个扩展的重装由调用方先删旧目录，不会到这里）
   let finalName = dirName;
   for (let n = 1; n <= 100; n++) {
     if (!fs.existsSync(path.join(baseDir, finalName))) break;
@@ -72,16 +149,16 @@ export async function unzipToModuleDir(buffer, { root, type, preferId = '' }) {
   const target = path.join(baseDir, finalName);
   fs.mkdirSync(target, { recursive: true });
 
-  for (let i = 0; i < entries.length; i++) {
+  for (let i = 0; i < picked.length; i++) {
     const rel = relNames[i];
     // 二次防线：拼接结果必须仍在 target 内（解析后 path.relative 检查）
     const dest = path.join(target, ...rel.split('/'));
     const relCheck = path.relative(target, dest);
     if (relCheck.startsWith('..') || path.isAbsolute(relCheck)) {
-      throw new Error(`安装包包含非法路径：${entries[i].name}`);
+      throw new Error(`安装包包含非法路径：${picked[i].name}`);
     }
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, entries[i].data);
+    fs.writeFileSync(dest, picked[i].data);
   }
   return finalName;
 }

@@ -314,6 +314,11 @@ function renderSkillsPage(data, toolsData) {
       <b>skills/</b> 注册工具，模型自己判断何时用 · <b>plugins/</b> 提供能力/钩子，命中即执行 · 放进目录即热重载
     </div>
     <div class="skills-list" id="skills-list"></div>
+    ${(data.duplicates || []).length ? `<div class="skills-hint warn">
+      ⚠ 有 ${data.duplicates.length} 个扩展装了多份副本（${data.duplicates.map((d) => esc(d.id)).join('、')}）——
+      加载时后一份会盖掉前一份，卡片只显示一个，看起来就像"安装了却没出现"。
+      <button class="btn-mini" data-act="dedupe">清理重复副本</button>
+    </div>` : ''}
     ${(data.uninstalled || []).length ? `<div class="skills-hint muted">配置里还有已删除的扩展记录：${data.uninstalled.map((u) => esc(u.id)).join('、')}</div>` : ''}
     <details class="tools-box">
       <summary>工具清单（本轮可用 <b>${toolsData.available ?? '?'}</b> / 注册 <b>${toolsData.total ?? 0}</b> 个）</summary>
@@ -434,6 +439,18 @@ function renderSkillCards() {
     ? `没有符合条件的扩展${skillFilter !== 'all' ? `（${SKILL_FILTER_LABEL[skillFilter]}）` : ''}${q ? `，关键词「${esc(skillQuery.trim())}」` : ''}
        <button class="btn-mini" data-act="filter-reset">清除筛选</button>`
     : '还没有安装任何扩展'}</div>`;
+}
+
+/** 刚装完的卡片闪一下并滚到可见：装完什么都不提示、只在列表里静悄悄多一个，很容易以为没装上。 */
+function highlightSkillCard(id) {
+  if (!id) return;
+  const box = $('#skills-list');
+  if (!box) return;
+  const node = [...box.querySelectorAll('.skill-card')].find((n) => n.dataset.id === id);
+  if (!node) return;
+  node.classList.add('just-installed');
+  node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => node.classList.remove('just-installed'), 2600);
 }
 
 /** 只重画一张卡片：保存成功后用它，保住 .skills-pane 的滚动位置。 */
@@ -1152,12 +1169,18 @@ function toolRowMarkup(t) {
     : (t.masterOnly
       ? '<span class="cap-off">仅主人</span>'
       : (t.tutorOnly ? '<span class="cap-off">仅学习模式</span>' : '<span class="cap-ok">可用</span>'));
+  // 卸载：工具本身是扩展注册的，单个删不掉 —— 只能把提供它的扩展卸掉（其余工具一起消失）
+  const uninstall = t.builtin || !t.skillId
+    ? '<span class="tool-remove muted" title="内置工具，随核心一起，不能单独卸载">—</span>'
+    : `<button class="btn-mini tool-remove" data-act="tool-uninstall" data-skill="${esc(t.skillId)}" data-tool="${esc(t.id)}"
+        title="卸载提供这个工具的扩展「${esc(t.skillId)}」（它注册的其它工具会一起消失）">卸载</button>`;
   return `<div class="tool-row">
     <div class="tool-main"><code>${esc(t.id)}</code><div class="tool-desc muted">${esc(t.description || '')}</div></div>
     <div class="tool-src">${t.builtin ? '内置' : '扩展 ' + esc(t.skillId || '')}</div>
     <div class="tool-cat">${esc(t.category || '')}</div>
     <div class="tool-state">${status}</div>
     <label class="tool-toggle"><input type="checkbox" data-act="tool-toggle" data-id="${esc(t.id)}" ${checked ? 'checked' : ''}></label>
+    ${uninstall}
   </div>`;
 }
 
@@ -1170,7 +1193,7 @@ function renderToolRows() {
     if (!q) return true;
     return (t.id + ' ' + (t.description || '') + ' ' + (t.category || '')).toLowerCase().includes(q);
   }).map(toolRowMarkup).join('');
-  box.innerHTML = `<div class="tool-row tool-head"><div>工具</div><div>来源</div><div>分类</div><div>状态</div><div>启用</div></div>`
+  box.innerHTML = `<div class="tool-row tool-head"><div>工具</div><div>来源</div><div>分类</div><div>状态</div><div>启用</div><div>卸载</div></div>`
     + (rows || '<div class="empty-hint">没有匹配的工具</div>');
 }
 
@@ -1191,10 +1214,19 @@ async function onSkillsChange(ev) {
         method: 'POST',
         body: JSON.stringify({ filename: file.name, dataBase64: b64 })
       });
-      alert(r.ok
-        ? `安装成功（${r.type === 'plugin' ? '确定性型插件' : 'LLM 型技能'}）：${r.dir}\n加载：${(r.loaded || []).join(', ') || '无'}`
-        : '安装失败');
+      if (!r.ok) {
+        alert('安装失败：' + (r.error || '未知错误'));
+        return;
+      }
+      // 说人话：装的是哪个扩展、是不是覆盖了旧的。
+      // 以前这里弹的是"加载：<全量 id 列表>"，看着像成功，其实根本对不上新装的那个。
+      const verb = (r.replaced || []).length ? '已覆盖安装' : '已安装';
+      showToast(`${verb} ${r.name || r.id}${r.version ? ' v' + r.version : ''}`, 'ok');
+      if (r.loadError) {
+        alert(`已安装到 ${r.dir}，但加载失败：\n${r.loadError}`);
+      }
       await loadSkillsPage();
+      highlightSkillCard(r.id);
     } catch (e) {
       alert('安装失败：' + e.message);
     } finally {
@@ -1256,6 +1288,23 @@ async function onSkillsClick(ev) {
     if (act === 'install') {
       const input = $('#skill-zip');
       if (input) input.click();
+      return;
+    }
+    if (act === 'tool-uninstall') {
+      const skillId = btn.dataset.skill;
+      const toolId = btn.dataset.tool || '';
+      if (!skillId) return;
+      if (!confirm(`卸载扩展「${skillId}」？\n\n它注册的所有工具（包括「${toolId}」）都会一起消失，目录也会被删除。`)) return;
+      await api('/api/skills/uninstall', { method: 'POST', body: JSON.stringify({ id: skillId }) });
+      await loadSkillsPage();
+      showToast(`已卸载 ${skillId}`, 'info');
+      return;
+    }
+    if (act === 'dedupe') {
+      if (!confirm('清理重复副本？\n\n同一个扩展的多份目录只保留当前生效的那一份，其余删除。')) return;
+      const r = await api('/api/skills/dedupe', { method: 'POST', body: '{}' });
+      await loadSkillsPage();
+      showToast(r.removed?.length ? `已清理 ${r.removed.length} 份重复副本` : '没有需要清理的副本', 'info');
       return;
     }
     if (act === 'filter') {

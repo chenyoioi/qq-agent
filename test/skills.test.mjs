@@ -144,6 +144,64 @@ assert.equal(getTool(diceId), null);
 assert.ok(!listTools().some((t) => t.skillId === 'example-dice'));
 ok('卸载后工具从注册表移除');
 
+// ── 安装器：清单在 dist/ 这类嵌套布局也要装到"目录根上就是清单" ──────────
+{
+  const { validateZipStructure, readZipManifest, unzipToModuleDir, findModuleDirsById } = await import('../src/zip-install.js');
+  // 极简 stored(不压缩) zip：只够构造测试包
+  const crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = (buf) => { let c = 0xffffffff; for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const makeStoredZip = (files) => {
+    const locals = []; const centrals = []; let offset = 0;
+    for (const [name, content] of Object.entries(files)) {
+      const data = Buffer.from(content); const nameBuf = Buffer.from(name); const crc = crc32(data);
+      const local = Buffer.alloc(30);
+      local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0, 6);
+      local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22);
+      local.writeUInt16LE(nameBuf.length, 26);
+      locals.push(local, nameBuf, data);
+      const central = Buffer.alloc(46);
+      central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
+      central.writeUInt32LE(crc, 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24);
+      central.writeUInt16LE(nameBuf.length, 28); central.writeUInt32LE(offset, 42);
+      centrals.push(central, nameBuf);
+      offset += local.length + nameBuf.length + data.length;
+    }
+    const centralBuf = Buffer.concat(centrals);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10);
+    end.writeUInt32LE(centralBuf.length, 12); end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, centralBuf, end]);
+  };
+
+  const installRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-install-'));
+  fs.mkdirSync(path.join(installRoot, 'skills'), { recursive: true });
+  fs.mkdirSync(path.join(installRoot, 'plugins'), { recursive: true });
+
+  // 清单在包名/dist/ 下（build 后再打包的常见形态）
+  const nested = makeStoredZip({
+    'distpkg/dist/skill.json': JSON.stringify({ id: 'nested-skill', name: '嵌套包', version: '1.0.0', apiVersion: 1 }),
+    'distpkg/dist/index.js': 'export function setup() {}',
+    'distpkg/README.md': 'readme'
+  });
+  const peek = readZipManifest(validateZipStructure(nested));
+  assert.equal(peek?.manifest?.id, 'nested-skill');
+  const dirName = await unzipToModuleDir(nested, { root: installRoot, type: 'skill', preferId: '' });
+  assert.equal(dirName, 'nested-skill', '目录名应取清单 id');
+  assert.ok(fs.existsSync(path.join(installRoot, 'skills', 'nested-skill', 'skill.json')), '清单必须在落地目录根上');
+  ok('清单在 dist/ 里也能装成"根上就是清单"（不再出现装了却看不见）');
+
+  // 同一 id 再装一次：调用方先删旧目录 → 不会再攒出 _1 副本
+  const found = findModuleDirsById(installRoot, 'nested-skill');
+  assert.equal(found.length, 1);
+  fs.rmSync(found[0].dir, { recursive: true, force: true });
+  const again = await unzipToModuleDir(nested, { root: installRoot, type: 'skill', preferId: 'nested-skill' });
+  assert.equal(again, 'nested-skill', '重装必须落到同一个目录');
+  assert.equal(findModuleDirsById(installRoot, 'nested-skill').length, 1);
+  assert.ok(!fs.existsSync(path.join(installRoot, 'skills', 'nested-skill_1')), '不该产生 _1 副本');
+  ok('重装落到同一目录，不再产生重复副本');
+}
+
 console.log(`\n扩展系统 ${pass} 项检查通过 ✅`);
 
 // ── 插件（确定性型）专项：生命周期、钩子、动态提示词、依赖门控 ──────────

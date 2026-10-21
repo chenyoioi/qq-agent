@@ -535,6 +535,40 @@ async function loadSkillRoot(rootDir, { log = console.log, label = 'skill' } = {
 }
 
 /**
+ * 列出两个根目录下**所有**已安装目录及其清单 id（含同 id 的重复副本）。
+ * UI 用它发现"同一个扩展装了好几份"：加载器按目录逐个加载、同 id 后者覆盖前者，
+ * 卡片只显示一份 —— 用户会以为"安装成功却没显示"，其实是副本在打架。
+ */
+export function listInstalledDirs({ roots = null } = {}) {
+  const rootList = [
+    { type: 'skills', dir: roots?.skills ? path.resolve(roots.skills) : SKILLS_DIR },
+    { type: 'plugins', dir: roots?.plugins ? path.resolve(roots.plugins) : PLUGINS_DIR }
+  ];
+  const out = [];
+  for (const { type, dir } of rootList) {
+    let names = [];
+    try {
+      names = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    } catch { continue; }
+    for (const name of names) {
+      const full = path.join(dir, name);
+      let id = '';
+      let version = '';
+      for (const mf of ['skill.json', 'plugin.json']) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(path.join(full, mf), 'utf8').replace(/^\uFEFF/, ''));
+          id = String(raw?.id || '');
+          version = String(raw?.version || '');
+          if (id) break;
+        } catch { /* 没有这个清单 */ }
+      }
+      out.push({ type, name, dir: full, relDir: `${type}/${name}`, id, version });
+    }
+  }
+  return out;
+}
+
+/**
  * 加载全部 Skill（skills/ + plugins/）。
  * 幂等：重复调用会重新加载并覆盖同 id 的 Skill（热重载依赖这个语义）。
  */
@@ -555,6 +589,22 @@ export async function loadPlugins({ log = console.log, roots = null } = {}) {
   ].filter(Boolean);
   const pruned = skillManager.pruneMissing(aliveIds, {});
   if (pruned.length) log(`[skill] 已卸载磁盘上不存在的 Skill：${pruned.join(', ')}`);
+
+  // 同一个 id 出现在多个目录：卡片只会显示一个（以最后一次加载为准）。
+  // 这以前是静默的 —— 用户重装后看到"安装成功"却找不到新扩展，排查全靠猜。
+  try {
+    const seenDir = new Map();
+    for (const r of [...skillRes.loaded, ...skillRes.failed, ...pluginRes.loaded, ...pluginRes.failed]) {
+      const id = String(r?.id || '');
+      if (!id) continue;
+      const rel = path.relative(APP_ROOT, r.dir || '').replace(/\\/g, '/');
+      const prev = seenDir.get(id);
+      if (prev && prev !== rel) {
+        log(`[skill] ⚠️ 重复安装：${id} 同时在 ${prev} 与 ${rel}，卡片只显示一个（以最后加载的为准）`);
+      }
+      seenDir.set(id, rel);
+    }
+  } catch { /* 告警失败不影响加载 */ }
 
   // 孤儿工具清扫：热重载覆盖注册后，旧版本独有（新版本没再注册）的工具
   // 不会有人清 —— unregisterToolsBySkill 会连新工具一起删（同 skillId 分不清
