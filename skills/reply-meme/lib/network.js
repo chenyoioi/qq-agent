@@ -1,6 +1,15 @@
 const ALLOWED_HOSTS = new Set(['aigengtu.com', 'img.aigengtu.com']);
+// 本地图库镜像（scripts/mirror-gallery.mjs 生成，由控制台 /gallery/* 提供）。
+// 镜像里的条目带本地 url，优先用它：远程 CDN 在部分网络下会超时/被墙，
+// 而图其实已经镜像到本机了。
+const LOCAL_MIRROR_RE = /^http:\/\/(?:127\.0\.0\.1|localhost):3210\/gallery\/[\w./-]+$/;
 
 export function trustedUrl(value) {
+  // 先认本地镜像：只允许本机 3210 的 /gallery/ 路径，避免变成"能读本机任意端口"
+  if (LOCAL_MIRROR_RE.test(String(value ?? ''))) {
+    const u = new URL(value);
+    if (!u.search && !u.hash) return u.href;
+  }
   const u = new URL(value, 'https://aigengtu.com/');
   if (u.protocol !== 'https:' || !ALLOWED_HOSTS.has(u.hostname) || u.username || u.password || (u.port && u.port !== '443')) {
     throw new Error('图源地址不在 aigengtu.com 白名单内');
@@ -10,7 +19,7 @@ export function trustedUrl(value) {
 
 // Host api.fetch remains the only network entry point, preserving web_fetch permissions.
 // Check each redirect before fetching it, and limit streamed bytes as well as Content-Length.
-export async function readBytes(httpFetch, value, { timeoutMs = 8000, maxBytes = 12 * 1024 * 1024, accept = '*/*' } = {}) {
+export async function readBytes(httpFetch, value, { timeoutMs = 15000, maxBytes = 12 * 1024 * 1024, accept = '*/*' } = {}) {
   const controller = new AbortController();
   let timer;
   const timeout = new Promise((_, reject) => {

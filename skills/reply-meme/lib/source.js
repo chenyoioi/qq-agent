@@ -44,11 +44,25 @@ export function parseIndex(raw) {
     for (const value of group.images) {
       if (!value || typeof value.original !== 'string') continue;
       try {
-        const original = trustedUrl(value.original);
-        if (!/\/meme\/\d+\.(webp|png|jpg|jpeg|gif)$/i.test(new URL(original).pathname) || seen.has(original)) continue;
+        // 优先本地镜像地址（value.url），它和 original 是同一张图；
+        // 远程 CDN 慢或不通时，镜像是唯一能秒出的来源。两者都非法才跳过。
+        let original = null;
+        for (const candidate of [value.url, value.original]) {
+          if (typeof candidate !== 'string') continue;
+          try {
+            const ok = trustedUrl(candidate);
+            if (!/\.(webp|png|jpg|jpeg|gif)$/i.test(new URL(ok).pathname)) continue;
+            original = ok;
+            break;
+          } catch { /* 换下一个候选 */ }
+        }
+        if (!original || seen.has(original)) continue;
         seen.add(original);
         let preview = '';
-        try { if (typeof value.preview === 'string') preview = trustedUrl(value.preview); } catch { /* optional */ }
+        for (const candidate of [value.preview, value.previewUrl]) {
+          if (typeof candidate !== 'string') continue;
+          try { preview = trustedUrl(candidate); break; } catch { /* optional */ }
+        }
         const title = clip(value.name || value.alt, 300);
         const alt = clip(value.alt, 300);
         const story = clip(typeof value.story === 'string' ? value.story : value.story?.zh, 1600);

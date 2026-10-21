@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 // QQ Agent cache-busts only the entry module. Bump this version when source.js changes.
-import { createSource, rankCandidates } from './lib/source.js?v=1.0.1';
+import { createSource, rankCandidates } from './lib/source.js?v=1.0.2';
 import { createHistory } from './lib/history.js';
 import { downloadImage, fingerprint, saveImage, sweepImages } from './lib/image.js';
 
