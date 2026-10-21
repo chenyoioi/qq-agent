@@ -1,0 +1,57 @@
+{
+  "id": "master-absolute",
+  "name": "主人绝对模式",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "把指定的 QQ 号（默认 1535743858）设为绝对主人：他发的消息在送进模型之前会插入一条最高优先级指令——不反驳、不讲道理、不提替代方案、直接照做，语气顺从；其他人完全不受影响。可在设置里改主人名单、是否在群里生效、是否保留安全底线，以及追加自定义要求。",
+  "author": "本地自建",
+  "enabledByDefault": true,
+  "settings": {
+    "enabled": true,
+    "masterQqs": "1535743858",
+    "mode": "absolute",
+    "applyToGroup": true,
+    "applyToPrivate": true,
+    "safetyFloor": true,
+    "extraRules": ""
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用主人绝对模式",
+      "description": "关掉后完全回到默认行为：模型爱顶嘴就顶嘴。"
+    },
+    "masterQqs": {
+      "type": "string",
+      "label": "主人 QQ 号（多个用逗号分隔）",
+      "description": "只有这些号发的消息会被当成“最高指令”。默认 1535743858。"
+    },
+    "mode": {
+      "type": "enum",
+      "label": "顺从程度",
+      "description": "absolute = 不反驳、不解释、直接执行；warm = 更顺从但保留一句提醒的余地。",
+      "values": ["absolute", "warm"]
+    },
+    "applyToGroup": {
+      "type": "boolean",
+      "label": "群聊里也生效",
+      "description": "关掉后只有私聊里对你绝对服从，群里当普通群友。"
+    },
+    "applyToPrivate": {
+      "type": "boolean",
+      "label": "私聊里生效",
+      "description": "默认开。"
+    },
+    "safetyFloor": {
+      "type": "boolean",
+      "label": "保留安全底线",
+      "description": "开着时，违法/伤害他人/泄露他人隐私的请求仍然拒绝；关掉则连这些也照做（不建议）。"
+    },
+    "extraRules": {
+      "type": "string",
+      "label": "追加要求（可选）",
+      "description": "会原样拼进提示里，比如“回复要叫我老板”“不许用感叹号”。"
+    }
+  }
+}
