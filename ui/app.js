@@ -194,6 +194,7 @@ let skillsData = null;              // 最近一次 /api/skills 的响应
 let skillsToolsData = { total: 0, tools: [] };
 let skillsRenderDeferred = false;   // 抽屉有未保存改动时，卡片重画推迟到关闭后
 let skillQuery = '';                // 卡片搜索词：客户端过滤，不重新请求
+let skillFilter = 'all';            // 状态筛选：all | active | disabled | broken
 
 // 密钥类字段的兜底判定：清单作者忘标 secret 时按名字识别。
 // 必须与后端 settingsView() 用同一套正则，否则前端会当成普通文本渲染成明文输入框。
@@ -211,6 +212,7 @@ const skillDrawer = {
   touched: new Set(),
   errors: {},        // key -> 错误文案
   collapsed: new Set(),
+  fieldQuery: '',    // 抽屉内字段筛选词
   saving: false
 };
 
@@ -248,25 +250,26 @@ function renderSkillsPage(data, toolsData) {
   const list = data.skills || [];
   const sum = data.summary || {};
   panel.innerHTML = `
-    <div class="skills-head">
-      <div>
-        共 <b>${sum.total ?? list.length}</b> 个扩展 · 启用 <b>${sum.active ?? 0}</b> · 停用 <b>${sum.disabled ?? 0}</b>
-        · 异常 <b>${sum.broken ?? 0}</b> · 工具 常规可用 <b>${toolsData.available ?? '?'}</b> / 注册 <b>${toolsData.total ?? 0}</b>
+    <div class="skills-toolbar">
+      <input id="skill-search" class="skills-search" placeholder="搜索扩展名 / 描述 / 字段名" value="${esc(skillQuery)}">
+      <div class="skill-filters" id="skill-filters">
+        ${skillFilterChip('all', '全部', sum.total ?? list.length)}
+        ${skillFilterChip('active', '启用', sum.active ?? 0)}
+        ${skillFilterChip('disabled', '停用', sum.disabled ?? 0)}
+        ${skillFilterChip('broken', '异常', sum.broken ?? 0)}
       </div>
-      <div class="skills-head-tools">
-        <input id="skill-search" class="skills-search" placeholder="搜索扩展名 / 描述 / 字段名" value="${esc(skillQuery)}">
-        <button class="btn-mini" data-act="reload">重新扫描磁盘</button>
-        <button class="btn-mini" data-act="install">安装扩展（zip）</button>
+      <div class="skills-toolbar-actions">
+        <button class="btn-mini" data-act="reload" title="重新扫描 skills/ 与 plugins/">重新扫描</button>
+        <button class="btn-mini" data-act="install">安装（zip）</button>
         <input type="file" id="skill-zip" accept=".zip" hidden>
       </div>
     </div>
     <div class="skills-hint muted">
-      <b>skills/</b>（LLM 型）注册工具，模型自己判断何时用；<b>plugins/</b>（确定性型）提供能力/钩子，核心命中即执行。
-      每个扩展 = 一个目录 + 清单（skill.json / plugin.json）+ index.js，放进对应目录即热重载生效。
+      <b>skills/</b> 注册工具，模型自己判断何时用 · <b>plugins/</b> 提供能力/钩子，命中即执行 · 放进目录即热重载
     </div>
     <div class="skills-list" id="skills-list"></div>
     ${(data.uninstalled || []).length ? `<div class="skills-hint muted">配置里还有已删除的扩展记录：${data.uninstalled.map((u) => esc(u.id)).join('、')}</div>` : ''}
-    <details class="tools-box" open>
+    <details class="tools-box">
       <summary>工具清单（本轮可用 <b>${toolsData.available ?? '?'}</b> / 注册 <b>${toolsData.total ?? 0}</b> 个）</summary>
       <div class="tools-filter">
         <input id="tool-search" placeholder="搜索工具名 / 描述 / 分类" value="${esc(toolSearch)}">
@@ -281,6 +284,29 @@ function renderSkillsPage(data, toolsData) {
 }
 
 // ── 卡片列表（客户端过滤）──
+
+const SKILL_FILTER_LABEL = { all: '全部', active: '启用', disabled: '停用', broken: '异常' };
+
+function skillFilterChip(key, label, count) {
+  const on = skillFilter === key ? ' active' : '';
+  return `<button type="button" class="skill-filter${on}" data-act="filter" data-filter="${key}">${label}<b>${count}</b></button>`;
+}
+
+function updateSkillFilterChips() {
+  const box = $('#skill-filters');
+  if (!box) return;
+  for (const btn of box.querySelectorAll('.skill-filter')) {
+    btn.classList.toggle('active', btn.dataset.filter === skillFilter);
+  }
+}
+
+/** 扩展是否通过状态筛选（搜索词另算）。 */
+function skillPassesFilter(sk) {
+  if (skillFilter === 'active') return !!sk.active;
+  if (skillFilter === 'disabled') return !sk.active;
+  if (skillFilter === 'broken') return !!sk.loadError;
+  return true;
+}
 
 /** 卡片筛选：先匹配扩展自身信息，再下钻到字段名/字段标签/字段说明。 */
 function matchSkill(sk, q) {
@@ -302,38 +328,45 @@ function matchSkill(sk, q) {
   return fields.length ? { fields } : null;
 }
 
+/**
+ * 卡片：只放进"一眼要判断的东西"，简介整段不展示。
+ * 扩展简介动辄几百字（点歌插件两屏都放不下），铺在卡片里会把网格撑成
+ * 一排排高低不齐的长条，反而找不到卡片。完整简介在「⚙ 设置」抽屉顶部，
+ * 默认两行、点「展开」看全文 —— 要看简介就进去看，浏览时只看结论。
+ */
 function skillCardHtml(sk, hit) {
   const kind = skillKindLabel(sk);
-  const status = sk.active
-    ? '<span class="cap-ok">✅ 启用</span>'
-    : (sk.loadError ? `<span class="cap-warn">❌ ${esc(sk.loadError)}</span>` : '<span class="cap-off">⏸ 停用</span>');
-  const toolList = (sk.toolIds || []).length
-    ? sk.toolIds.map((t) => `<code>${esc(t)}</code>`).join('、')
-    : '<span class="muted">无（确定性型不注册工具）</span>';
-  const caps = (sk.capabilities || []).length
-    ? sk.capabilities.map((c) => `<code>${esc(c)}</code>`).join('、')
-    : '<span class="muted">—</span>';
-  const fieldCount = Object.keys(sk.configSchema || {}).length;
+  const statePill = sk.loadError
+    ? '<span class="skill-state bad">异常</span>'
+    : (sk.active ? '<span class="skill-state ok">启用</span>' : '<span class="skill-state off">停用</span>');
+  const tools = sk.toolIds || [];
+  const caps = sk.capabilities || [];
+  // 工具/能力只留数量 + 前两项能力，完整清单放 title：卡片是用来扫的，不是用来读的
+  const toolChip = `<span class="skill-chip" title="工具：${esc(tools.length ? tools.join('、') : '无（确定性型不注册工具）')}">🧰 ${tools.length ? `${tools.length} 工具` : '无工具'}</span>`;
+  // 没有能力就不摆一块「无能力」的牌子：8 张卡片都挂同一句废话，纯属噪音
+  const capChips = caps.length
+    ? caps.slice(0, 2).map((c) => `<span class="skill-chip" title="能力：${esc(caps.join('、'))}">⚡ ${esc(c)}</span>`).join('')
+      + (caps.length > 2 ? `<span class="skill-chip" title="能力：${esc(caps.join('、'))}">+${caps.length - 2}</span>` : '')
+    : '';
   // 上次修改时间取自配置文件 mtime（后端给 configMtime），没有就整块省略
-  const mtime = sk.configMtime
-    ? `<span class="skill-mtime" title="data/config.json 的上次修改时间：所有扩展设置都存在这个文件里">上次修改 ${fmtTime(sk.configMtime)}</span>`
-    : '';
+  const mtime = sk.configMtime ? `<span class="skill-mtime" title="data/config.json 的上次修改时间：所有扩展设置都存在这个文件里">改于 ${fmtTime(sk.configMtime)}</span>` : '';
+  const err = sk.loadError ? `<div class="skill-loaderr" title="${esc(sk.loadError)}">${esc(sk.loadError)}</div>` : '';
   const hitHint = (hit?.fields || []).length
-    ? `<div class="skill-hit muted">命中字段：${hit.fields.slice(0, 4).map((x) => esc(x)).join('、')}${hit.fields.length > 4 ? ' …' : ''}</div>`
+    ? `<div class="skill-hit">命中字段：${hit.fields.slice(0, 3).map((x) => esc(x)).join('、')}${hit.fields.length > 3 ? ` …+${hit.fields.length - 3}` : ''}</div>`
     : '';
-  return `<div class="skill-card" data-id="${esc(sk.id)}">
+  const fieldCount = Object.keys(sk.configSchema || {}).length;
+  return `<div class="skill-card${sk.loadError ? ' has-error' : ''}" data-id="${esc(sk.id)}">
     <div class="skill-card-head">
-      <div class="skill-card-title"><b>${esc(sk.name || sk.id)}</b> <span class="skill-kind">${kind}</span> <span class="muted">v${esc(sk.version || '')}</span></div>
-      <div class="skill-card-state">${status}${mtime}</div>
+      <div class="skill-card-title"><b>${esc(sk.name || sk.id)}</b><span class="skill-kind">${kind}</span><span class="skill-ver" title="扩展 id：${esc(sk.id)}">v${esc(sk.version || '')}</span></div>
+      ${statePill}
     </div>
-    <div class="skill-desc">${esc(sk.description || '')}</div>
-    <div class="skill-meta">工具：${toolList}</div>
-    <div class="skill-meta">能力：${caps}</div>
+    ${err}
+    <div class="skill-card-meta">${toolChip}${capChips}${mtime}</div>
     ${hitHint}
-    <div class="skill-actions">
-      <button class="btn-mini btn-accent" data-act="settings" title="打开设置面板（按分组编辑、就地校验）">⚙ 设置${fieldCount ? `（${fieldCount}）` : ''}</button>
+    <div class="skill-card-actions">
+      <button class="btn-mini btn-accent" data-act="settings" title="打开设置面板（按分组编辑、就地校验）">⚙ 设置${fieldCount ? `<span class="skill-field-count">${fieldCount}</span>` : ''}</button>
       <label class="skill-enable"><input type="checkbox" data-act="toggle" ${sk.active ? 'checked' : ''}> 启用</label>
-      ${sk.hasUi ? `<button class="btn-mini" data-act="panel">打开面板</button>` : ''}
+      ${sk.hasUi ? '<button class="btn-mini" data-act="panel">面板</button>' : ''}
       <button class="btn-mini" data-act="uninstall">卸载</button>
     </div>
   </div>`;
@@ -345,12 +378,16 @@ function renderSkillCards() {
   const q = skillQuery.trim().toLowerCase();
   const rows = [];
   for (const sk of (skillsData?.skills || [])) {
+    if (!skillPassesFilter(sk)) continue;
     const hit = matchSkill(sk, q);
     if (!hit) continue;
     rows.push(skillCardHtml(sk, hit));
   }
-  box.innerHTML = rows.join('')
-    || `<div class="empty-hint">${q ? `没有匹配「${esc(skillQuery.trim())}」的扩展` : '还没有安装任何扩展'}</div>`;
+  const filtered = skillFilter !== 'all' || !!q;
+  box.innerHTML = rows.join('') || `<div class="empty-hint">${filtered
+    ? `没有符合条件的扩展${skillFilter !== 'all' ? `（${SKILL_FILTER_LABEL[skillFilter]}）` : ''}${q ? `，关键词「${esc(skillQuery.trim())}」` : ''}
+       <button class="btn-mini" data-act="filter-reset">清除筛选</button>`
+    : '还没有安装任何扩展'}</div>`;
 }
 
 /** 只重画一张卡片：保存成功后用它，保住 .skills-pane 的滚动位置。 */
@@ -358,7 +395,7 @@ function refreshSkillCardNode(sk) {
   const box = $('#skills-list');
   if (!box) return;
   const node = [...box.querySelectorAll('.skill-card')].find((n) => n.dataset.id === sk.id);
-  if (!node) return;   // 当前搜索词把它过滤掉了，就不硬插回来
+  if (!node) return;   // 当前搜索词/筛选把它挡在外面了，就不硬插回来
   node.outerHTML = skillCardHtml(sk, matchSkill(sk, skillQuery.trim().toLowerCase()) || { fields: [] });
 }
 
@@ -530,15 +567,53 @@ function skillFieldHtml(f) {
     : '';
   const tag = f.undeclared ? '<span class="skill-field-tag">未声明</span>' : '';
   const keyHint = f.key !== f.label ? `<code class="skill-field-key">${esc(f.key)}</code>` : '';
+  // 数字范围直接标在标签右侧：比让用户在说明里翻「1~50」快得多
+  const range = (f.type === 'number' && (f.min !== undefined || f.max !== undefined))
+    ? `<span class="skill-range">${f.min !== undefined ? esc(f.min) : '−∞'} ~ ${f.max !== undefined ? esc(f.max) : '∞'}</span>`
+    : '';
   return `<div class="skill-field-row" data-field="${esc(f.key)}">
     <div class="skill-field-head">
       <label class="skill-field-label" for="skf-${esc(f.key)}">${esc(f.label)}${f.required ? '<span class="skill-req">*</span>' : ''}${tag}</label>
-      <span class="skill-field-head-right">${keyHint}${resetBtn}</span>
+      <span class="skill-field-head-right">${range}${keyHint}${resetBtn}</span>
     </div>
     ${skillFieldControl(f, skillDrawer.draft[f.key])}
     ${f.description ? `<div class="skill-field-desc">${esc(f.description)}</div>` : ''}
     <div class="skill-field-error" data-error-for="${esc(f.key)}"></div>
   </div>`;
+}
+
+/**
+ * 说明文字折行：清单作者写的说明常常是三四行（有些超过 200 字），
+ * 全部摊开会让 36 个字段的面板变成一堵墙。这里默认折成两行，
+ * 只给真正被折叠的那些补一个「展开」按钮（量一下有没有溢出，
+ * 不靠字数猜，短说明就完全不多一个按钮）。
+ */
+function enhanceDescriptions(root) {
+  if (!root) return;
+  for (const el of root.querySelectorAll('.skill-field-desc, .skill-drawer-desc')) {
+    if (el.dataset.enhanced) continue;
+    el.dataset.enhanced = '1';
+    // 有布局就按真实是否溢出判断（最准）；没有布局（隐藏/无头环境）时退回字数
+    const measured = el.clientHeight > 0 || el.scrollHeight > 0;
+    const overflowing = measured
+      ? el.scrollHeight > el.clientHeight + 1
+      : (el.textContent || '').length > 60;
+    if (!overflowing) continue;
+    el.classList.add('clamped');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'skill-desc-toggle';
+    btn.dataset.act = 'desc-toggle';
+    btn.textContent = '展开';
+    el.insertAdjacentElement('afterend', btn);
+  }
+}
+
+function toggleDescription(btn) {
+  const desc = btn.previousElementSibling;
+  if (!desc) return;
+  const open = desc.classList.toggle('open');
+  btn.textContent = open ? '收起' : '展开';
 }
 
 function skillGroupHtml(name, fields) {
@@ -568,10 +643,15 @@ function findErrorBox(key) {
 // ── 抽屉渲染 ──
 
 function drawerSubHtml(sk) {
-  const state = sk.active ? '<span class="cap-ok">✅ 已启用</span>' : '<span class="cap-off">⏸ 已停用</span>';
   const count = allDrawerFields().filter((f) => !f.undeclared).length;
-  const mtime = sk.configMtime ? `<span class="skill-mtime">上次修改 ${fmtTime(sk.configMtime)}</span>` : '';
-  return `${state}<span class="skill-drawer-sep">·</span><span class="muted">${count} 项设置</span>${mtime}`;
+  const groups = new Set(allDrawerFields().map((f) => f.group)).size;
+  const mtime = sk.configMtime ? `<span class="skill-mtime" title="data/config.json 的上次修改时间">改于 ${fmtTime(sk.configMtime)}</span>` : '';
+  return `<span class="muted">${count} 项设置${groups > 1 ? ` · ${groups} 组` : ''}</span>${mtime}`;
+}
+
+function drawerStatePill(sk) {
+  return sk.loadError ? '<span class="skill-state bad">异常</span>'
+    : (sk.active ? '<span class="skill-state ok">启用</span>' : '<span class="skill-state off">停用</span>');
 }
 
 function renderDrawerBody() {
@@ -590,8 +670,35 @@ function renderDrawerBody() {
     sec.classList.toggle('collapsed', skillDrawer.collapsed.has(sec.dataset.group));
   }
   body.scrollTop = scrollTop;   // 重画不跳位置
+  enhanceDescriptions(drawerRoot());
+  applyFieldFilter();
   refreshErrors();
   updateDirtyHint();
+}
+
+/**
+ * 抽屉内字段筛选：字段多（点歌插件 35 项）时靠滚动找一项太慢。
+ * 只隐藏不匹配的行，不重画 —— 输入焦点和已填内容都不受影响。
+ */
+function applyFieldFilter() {
+  const root = drawerRoot();
+  if (!root) return;
+  const q = skillDrawer.fieldQuery.trim().toLowerCase();
+  let visible = 0;
+  for (const sec of root.querySelectorAll('.skill-group')) {
+    let hit = 0;
+    for (const row of sec.querySelectorAll('.skill-field-row')) {
+      const f = allDrawerFields().find((x) => x.key === row.dataset.field);
+      const hay = f ? `${f.key} ${f.label} ${f.description}`.toLowerCase() : '';
+      const show = !q || hay.includes(q);
+      row.hidden = !show;
+      if (show) hit++;
+    }
+    sec.hidden = hit === 0;
+    visible += hit;
+  }
+  const nohit = document.getElementById('skill-field-nohit');
+  if (nohit) nohit.hidden = !(q && visible === 0);
 }
 
 function updateDirtyHint() {
@@ -603,8 +710,11 @@ function updateDirtyHint() {
 }
 
 function updateDrawerHead() {
+  if (!skillDrawer.skill) return;
   const sub = document.getElementById('skill-drawer-sub');
-  if (sub && skillDrawer.skill) sub.innerHTML = drawerSubHtml(skillDrawer.skill);
+  if (sub) sub.innerHTML = drawerSubHtml(skillDrawer.skill);
+  const state = document.getElementById('skill-drawer-state');
+  if (state) state.innerHTML = drawerStatePill(skillDrawer.skill);
 }
 
 // ── 草稿 / 校验 ──
@@ -705,6 +815,11 @@ function setControlValue(f, value) {
 
 function onDrawerInput(ev) {
   const el = ev.target;
+  if (el?.id === 'skill-field-search') {
+    skillDrawer.fieldQuery = el.value || '';
+    applyFieldFilter();
+    return;
+  }
   const key = el?.dataset?.key;
   if (!key || !(key in skillDrawer.draft)) return;
   skillDrawer.draft[key] = el.type === 'checkbox' ? !!el.checked : el.value;
@@ -869,6 +984,7 @@ function closeSkillDrawer() {
   skillDrawer.touched.clear();
   skillDrawer.errors = {};
   skillDrawer.collapsed.clear();
+  skillDrawer.fieldQuery = '';
   skillDrawer.saving = false;
   // 抽屉期间被推迟的卡片重画，现在补上（重画会重建搜索框，值取自 skillQuery 不丢）
   if (skillsRenderDeferred) {
@@ -887,6 +1003,7 @@ function onDrawerClick(ev) {
   const act = btn.dataset.act;
   if (act === 'drawer-close') return requestCloseSkillDrawer();
   if (act === 'group-toggle') return toggleGroup(btn.closest('.skill-group'));
+  if (act === 'desc-toggle') return toggleDescription(btn);
   if (act === 'toggle-secret') return toggleSecret(btn.dataset.key);
   if (act === 'field-reset') return resetFieldToDefault(btn.dataset.key);
   if (act === 'reset-all') return resetAllToDefaults();
@@ -928,6 +1045,7 @@ function openSkillDrawer(id) {
   skillDrawer.touched.clear();
   skillDrawer.errors = {};
   skillDrawer.collapsed.clear();
+  skillDrawer.fieldQuery = '';
 
   const overlay = document.createElement('div');
   overlay.className = 'skill-drawer-overlay';
@@ -939,13 +1057,21 @@ function openSkillDrawer(id) {
           <div class="skill-drawer-title">
             <b>${esc(sk.name || sk.id)}</b>
             <span class="skill-kind">${skillKindLabel(sk)}</span>
-            <span class="muted">v${esc(sk.version || '')}</span>
+            <span class="skill-ver">v${esc(sk.version || '')}</span>
+            <span id="skill-drawer-state">${drawerStatePill(sk)}</span>
           </div>
           <div class="skill-drawer-sub" id="skill-drawer-sub">${drawerSubHtml(sk)}</div>
+          ${sk.loadError ? `<div class="skill-drawer-loaderr">${esc(sk.loadError)}</div>` : ''}
+          ${sk.description ? `<div class="skill-drawer-desc">${esc(sk.description)}</div>` : ''}
         </div>
         <button type="button" class="skill-drawer-close" data-act="drawer-close" title="关闭（Esc）">✕</button>
       </header>
+      <div class="skill-drawer-toolbar">
+        <input id="skill-field-search" class="skill-field-search" placeholder="筛选字段（名称 / key / 说明）" autocomplete="off">
+        <span class="muted skill-drawer-toolbar-hint">改完按 Ctrl+S 保存</span>
+      </div>
       <div class="skill-drawer-body" id="skill-drawer-body"></div>
+      <div class="skill-drawer-nohit" id="skill-field-nohit" hidden>没有匹配的字段</div>
       <div class="skill-drawer-errorbar" id="skill-drawer-errorbar" hidden></div>
       <footer class="skill-drawer-foot">
         <span class="skill-dirty" id="skill-dirty-hint" hidden>● 有未保存修改</span>
@@ -964,6 +1090,7 @@ function openSkillDrawer(id) {
   // 锁定背景滚动：抽屉内部自己滚，背景别跟着动
   document.body.classList.add('skill-drawer-open');
   renderDrawerBody();
+  enhanceDescriptions(overlay);
   overlay.querySelector('.skill-drawer-close')?.focus();
 }
 
@@ -1083,6 +1210,18 @@ async function onSkillsClick(ev) {
     if (act === 'install') {
       const input = $('#skill-zip');
       if (input) input.click();
+      return;
+    }
+    if (act === 'filter') {
+      skillFilter = btn.dataset.filter || 'all';
+      updateSkillFilterChips();
+      renderSkillCards();
+      return;
+    }
+    if (act === 'filter-reset') {
+      skillQuery = '';
+      skillFilter = 'all';
+      if (skillsData) renderSkillsPage(skillsData, skillsToolsData);
       return;
     }
     if (act === 'settings') {
