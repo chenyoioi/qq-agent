@@ -1,0 +1,71 @@
+{
+  "id": "voxcpm-voice",
+  "name": "鲸鱼语音（VoxCPM）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "media",
+  "description": "用小鲸鱼参考音频做 VoxCPM2 音色克隆，把文字念成语音发到当前会话。群友说「读一下XXX」「念一下XXX」时触发。",
+  "author": "",
+  "enabledByDefault": true,
+  "permissions": ["web_fetch"],
+  "settings": {
+    "refAudio": "F:\\AI\\qq\\语音\\小鲸鱼案例语音.wav",
+    "control": "",
+    "cfg": 2,
+    "maxChars": 200,
+    "apiBase": "https://openbmb-voxcpm-demo.hf.space",
+    "timeoutSec": 120
+  },
+  "configSchema": {
+    "refAudio": {
+      "type": "string",
+      "label": "参考音频路径",
+      "description": "用于克隆音色的 wav/mp3 绝对路径，建议不超过 50 秒。留空则使用技能自带的小鲸鱼参考音频（assets/reference.wav）。"
+    },
+    "control": {
+      "type": "string",
+      "label": "默认语气描述",
+      "multiline": true,
+      "description": "可留空。作为所有朗读的默认风格，例如「温柔甜美，语速偏慢」。群友在消息里明确指定语气时，会以群友指定的为准。"
+    },
+    "cfg": {
+      "type": "number",
+      "label": "CFG 引导强度",
+      "min": 1,
+      "max": 3,
+      "step": 0.1,
+      "description": "1.0~3.0，默认 2.0。数值越高越贴近参考音频的音色，越低生成风格越自由。"
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "单次最多朗读字数",
+      "min": 10,
+      "max": 500,
+      "step": 10,
+      "description": "超过这个字数会截取到最近的句号处再合成，防止合成时间过长。默认 200。"
+    },
+    "apiBase": {
+      "type": "string",
+      "label": "VoxCPM 服务地址",
+      "description": "默认使用 HuggingFace Space：https://openbmb-voxcpm-demo.hf.space 。如果你以后自建了服务，改这里即可。"
+    },
+    "timeoutSec": {
+      "type": "number",
+      "label": "合成超时（秒）",
+      "min": 15,
+      "max": 600,
+      "step": 15,
+      "description": "单次合成的等待上限，默认 120 秒。Space 冷启动或排队时可能需要更久。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "voxcpm-voice-note",
+        "title": "鲸鱼语音（朗读）",
+        "priority": 45,
+        "content": "你有语音能力：群友说「读一下XXX」「念一下XXX」「用鲸鱼的声音说XXX」，或要求把某段话/某条消息用语音念出来时，调用 read_aloud 工具，把要念的内容原样放进 text。群友指定了语气（如「用生气的语气读」「温柔点」）时，把风格描述放进 control。合成需要几秒，调用失败就如实说一声，不要改用文字假装念过了。"
+      }
+    ]
+  }
+}

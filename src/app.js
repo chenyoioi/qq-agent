@@ -35,7 +35,7 @@ import { skillManager, looksLikeSecretKey } from './skills/manager.js';
 import { setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
 import { listTools, getToolAvailability } from './tool-registry.js';
 import { KB_TOOL_NAMES } from './tools.js';
-import { validateZipStructure, unzipToModuleDir, readZipManifest, findModuleDirsById } from './zip-install.js';
+import { validateZipStructure, unzipToModuleDir, readZipManifest, findModuleDirsById, repairMojibakeNames } from './zip-install.js';
 
 // 全局 fetch（undici）默认连接建立超时只有 10 秒，openrouter.ai 这类海外端点
 // 握手慢时会直接报 "Connect Timeout Error ... timeout: 10000ms"（注意这不是
@@ -1386,12 +1386,14 @@ export function createApp({ log = console.log } = {}) {
         }
         // 顺带把 `id_1` `id_2` 这种安装器产物改回清单 id：
         // 配置里的绝对路径（如 skills/voxcpm-voice/assets/reference.wav）才继续有效
+        let repaired = [];
+        try { repaired = repairMojibakeNames(ROOT); } catch { /* 忽略 */ }
         const renamed = normalizeInstalledDirNames({ log });
         if (removed.length || renamed.length) {
           await reloadSkills({ reason: 'dedupe' });
           emit('skills-changed', { at: Date.now() });
         }
-        return json(res, 200, { ok: true, removed, renamed });
+        return json(res, 200, { ok: true, removed, renamed, repaired });
       }
 
       // 安装：body { filename, dataBase64, type?: 'skill'|'plugin' }
@@ -1437,6 +1439,11 @@ export function createApp({ log = console.log } = {}) {
           if (replaced.length) log(`[skill] 覆盖安装 ${wantedId}：已移除旧目录 ${replaced.join('、')}`);
 
           const dirName = await unzipToModuleDir(buf, { root: ROOT, type, preferId: wantedId });
+          // 顺手修掉 GBK 文件名被当 UTF-8 解出来的乱码目录名（Windows 打的包很常见）
+          try {
+            const fixedNames = repairMojibakeNames(ROOT);
+            if (fixedNames.length) log(`[skill] 修正乱码文件名：${fixedNames.join('、')}`);
+          } catch { /* 修不了不影响安装 */ }
           const result = await reloadSkills({ reason: 'install' });
           const installedId = String(wantedId || dirName);
           const installedFailed = result.failed.find((r) => r.id === installedId);

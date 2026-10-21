@@ -1,5 +1,19 @@
 # 更新日志
 
+## 1.1.30（2026-10-21）
+
+### 扩展整理：12 个扩展到入库 + 乱码文件名修复
+
+- **`plugins/` 与 `skills/` 全部提交进仓库**（12 个扩展、约 2.3MB，含 voxcpm 参考音频）。
+  此前它们只存在于这台机器上：`git clean` 或换机器 clone 就全没了，迁移还得靠手打包。
+  现在 clone 即有，`scripts/backup.sh` 也照样把它们一起备份；
+- **zip 中文文件名按规范解码**：Windows 上打的包用 GBK 写文件名，之前一律按 UTF-8 解，
+  于是 `安装与使用.txt` 变成 `σ«ëΦúàΣ╕ÄΣ╜┐τö¿.txt`。现在按 zip 头里的
+  「UTF-8 标志位」判断，没置位时严格解 UTF-8、失败再按 GBK；
+  同时加了 `repairMojibakeNames()` 把已经装坏的乱码名还原（安装后与「清理重复副本」时都会跑一次）；
+- 已修正本机两个乱码名：`plugins/group-manner/安装与使用.txt`、`skills/voxcpm-voice/实例语音/`；
+- `MIGRATION.md` 同步更新：扩展不再需要单独导出，但旧机器上覆盖更新过的版本仍建议 export 同步。
+
 ## 1.1.29（2026-10-21）
 
 ### 换机器迁移：`scripts/migrate.mjs` + MIGRATION.md

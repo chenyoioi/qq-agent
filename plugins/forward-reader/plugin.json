@@ -1,0 +1,55 @@
+{
+  "id": "forward-reader",
+  "name": "合并转发展开（修复版）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "修复「合并转发聊天记录」打不开的问题：用转发段里的真实 id 去取内容（核心过去传的是负数 message_id，协议端只会回 payload is empty）。取到后写回存档，模型不用重复展开。",
+  "author": "QQ Agent",
+  "enabledByDefault": true,
+  "capabilities": [
+    "forward.expand"
+  ],
+  "requires": [],
+  "settings": {
+    "autoUse": true,
+    "maxNodes": 50,
+    "maxChars": 4000,
+    "writeBack": true,
+    "fallbackByGetMsg": true,
+    "markUnreadable": true
+  },
+  "configSchema": {
+    "autoUse": {
+      "type": "boolean",
+      "label": "自动增强 read_forward 工具",
+      "description": "开启后，模型调用内置的「展开转发消息」时会自动走本插件的可靠路径（先取原始消息拿到真实 id，再展开）。关闭则只在模型主动调用本插件工具时生效。"
+    },
+    "maxNodes": {
+      "type": "number",
+      "label": "最多展开条数",
+      "description": "一次最多读取多少条转发消息节点，默认 50。转发很长时后面的会被截断并注明「还有 N 条未展开」。"
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "文本长度上限（字符）",
+      "description": "展开结果的字符上限，默认 4000，防止超长转发把上下文撑爆。"
+    },
+    "writeBack": {
+      "type": "boolean",
+      "label": "展开结果写回存档",
+      "description": "开启后，展开成功的内容会永久写回消息存档 —— 模型不用重复展开、存档页和记忆整理也能看到转发内容。"
+    },
+    "fallbackByGetMsg": {
+      "type": "boolean",
+      "label": "用 get_msg 反查真实 id",
+      "description": "这是本次修复的关键步骤：负数 message_id 在协议端取不到内容，必须先用 get_msg 取回原始消息段、从转发段里读出真实 id。除非你明确知道协议端支持直接用 message_id，否则不要关。"
+    },
+    "markUnreadable": {
+      "type": "boolean",
+      "label": "读不到时标注「未读取」",
+      "description": "开启后，取不到内容的转发会被标成「插件未能读取」。这是防止模型凭空编造转发内容——用户最在意的就是别乱编。"
+    }
+  },
+  "prompt": null
+}

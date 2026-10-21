@@ -62,6 +62,55 @@ export function readZipManifest(entries) {
  * 加载器按目录逐个加载、同 id 后者覆盖前者 —— 界面上永远只有一张卡片，
  * 用户看到"安装成功"却找不到新东西，磁盘上还多了一堆没人用的副本。
  */
+// CP437 高半区（0x80–0xFF）。历史上有些解压路径把 UTF-8 字节按 CP437 解，
+// 于是「安装与使用.txt」变成「σ«ëΦúàΣ╕ÄΣ╜┐τö¿.txt」；要还原就得按这张表反查字节。
+const CP437_HIGH = 'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
+
+/** 把"CP437 误解码"出来的名字还原成 UTF-8；不是这种形态就返回空串。 */
+function fixCp437Mojibake(name) {
+  const bytes = [];
+  for (const ch of String(name)) {
+    const code = ch.codePointAt(0);
+    if (code < 0x80) { bytes.push(code); continue; }
+    const idx = CP437_HIGH.indexOf(ch);
+    if (idx < 0) return '';
+    bytes.push(0x80 + idx);
+  }
+  try {
+    const fixed = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(bytes));
+    return /[\u4e00-\u9fff]/.test(fixed) ? fixed : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 修历史遗留的乱码文件名（GBK 名被当 UTF-8 解出来的产物，如 `σ«ëΦúàΣ╕ÄΣ╜┐τö¿.txt`）。
+ * 只处理扩展目录下一层，幂等：修不了就跳过。
+ */
+export function repairMojibakeNames(root) {
+  const fixed = [];
+  for (const type of ['skills', 'plugins']) {
+    const base = path.join(root, type);
+    let dirs = [];
+    try { dirs = fs.readdirSync(base, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch { continue; }
+    for (const dirName of dirs) {
+      const dir = path.join(base, dirName);
+      let names = [];
+      try { names = fs.readdirSync(dir); } catch { continue; }
+      for (const name of names) {
+        const repaired = fixCp437Mojibake(name);
+        if (!repaired || repaired === name) continue;
+        try {
+          fs.renameSync(path.join(dir, name), path.join(dir, repaired));
+          fixed.push(`${type}/${dirName}/${name} → ${repaired}`);
+        } catch { /* 目标已存在或权限问题，跳过 */ }
+      }
+    }
+  }
+  return fixed;
+}
+
 export function findModuleDirsById(root, id) {
   const want = String(id ?? '').trim();
   if (!want) return [];
@@ -164,6 +213,23 @@ export async function unzipToModuleDir(buffer, { root, type, preferId = '' }) {
 }
 
 /** 极简 zip 读取器：中央目录定位 + 解压全部文件条目。不支持的特性直接抛错。 */
+/**
+ * 解 zip 条目名。
+ *
+ * zip 规范：通用标志位 bit 11 = 名字是 UTF-8；没置位时名字是"本地编码"。
+ * Windows 上打的包（大量官网插件）用 GBK 写中文文件名 —— 直接按 utf8 解会变成
+ * `σ«ëΦúàΣ╕ÄΣ╜┐τö¿.txt` 这种乱码目录，装上去没事但看着像坏包。
+ * 这里先按 UTF-8 **严格**解，失败再按 GBK；两者都失败才退回宽松 UTF-8。
+ */
+function decodeZipName(buf, flags) {
+  if (flags & 0x800) return buf.toString('utf8');   // 明确声明 UTF-8
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    try { return new TextDecoder('gbk').decode(buf); } catch { return buf.toString('utf8'); }
+  }
+}
+
 function parseZip(buffer) {
   const sig = (off) => buffer.readUInt32LE(off);
   // 定位 EOCD（22 字节，从尾部向前扫，允许有注释）
@@ -184,7 +250,7 @@ function parseZip(buffer) {
     const extraLen = buffer.readUInt16LE(ptr + 30);
     const commentLen = buffer.readUInt16LE(ptr + 32);
     const localOff = buffer.readUInt32LE(ptr + 42);
-    const name = buffer.toString('utf8', ptr + 46, ptr + 46 + nameLen);
+    const name = decodeZipName(buffer.subarray(ptr + 46, ptr + 46 + nameLen), buffer.readUInt16LE(ptr + 8));
 
     // 目录条目（以 / 结尾）跳过
     if (!name.endsWith('/')) {
