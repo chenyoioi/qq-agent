@@ -12,7 +12,7 @@
 
 import { getConfig } from './config.js';
 import { formatFullTime, formatShortTime } from './util.js';
-import { buildStickerContext, buildStickerStrategyHint } from './stickers.js';
+import { buildStickerContext, buildStickerCadenceNote, buildStickerStrategyHint } from './stickers.js';
 
 // ── 系统提示 ─────────────────────────────────────────────────────────────
 
@@ -463,6 +463,9 @@ export function buildUserPrompt(ctx) {
   if (cfg.sticker?.enabled !== false) {
     const stickerCtx = buildStickerContext(ctx.stickerEntries || [], Number(cfg.sticker?.promptMaxStickers) || 10);
     if (stickerCtx) parts.push(stickerCtx);
+    // 配图节奏：连续几条纯文字就提醒一次（拿真实发送记录算的，比"频率"那句管用）
+    const cadence = buildStickerCadenceNote(ctx.store?.recent?.(ctx.chatKey, { limit: 40 }) || []);
+    if (cadence) parts.push(cadence);
   }
 
   // 引导说明

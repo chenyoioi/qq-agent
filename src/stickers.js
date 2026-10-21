@@ -147,12 +147,36 @@ export function buildStickerContext(entries, max = 10) {
   return `【可用表情包】你的 QQ 收藏表情里有 ${list.length} 个表情（以下为常用/有备注的 ${top.length} 个，完整列表可用 list_stickers 查询）：\n${lines.join('\n')}`;
 }
 
+/**
+ * 配图节奏提醒：看"我最近连续几条纯文字发言"，到点了就提示一次。
+ *
+ * 为什么要这条：静态的"频率：每 1~2 条"模型基本不执行（它看不到自己配了几张），
+ * 而这条是拿真实发送记录算出来的 —— 连续 N 条纯文字后提醒，才有实际作用。
+ *
+ * @returns {string} 需要提醒时返回一行提示，否则空串
+ */
+export function buildStickerCadenceNote(entries, { threshold = 2, maxScan = 40 } = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  let dry = 0;                 // 从最后一条往前数：连续几条"我发的、没带图"
+  for (let i = list.length - 1; i >= 0 && i >= list.length - maxScan; i--) {
+    const m = list[i];
+    if (!m || !m.self) continue;                    // 只看自己的发言
+    const media = Array.isArray(m.media) ? m.media : [];
+    const hasImage = media.length > 0;
+    if (hasImage) break;                            // 上一条带了图 → 不用提醒
+    dry += 1;
+    if (dry >= threshold) break;
+  }
+  if (dry < threshold) return '';
+  return `【配图提醒】你最近 ${dry} 条发言都是纯文字。这次只要有一点点情绪（接梗、吐槽、被夸、装委屈、无语、晚安），就**先发一张表情包，再说话**（先调表情工具，图会当场发出）。话题严肃/正在办正事才跳过。`;
+}
+
 /** 发送前的表情包策略提示（软策略）。 */
 export function buildStickerStrategyHint() {
   return [
     '【表情包策略：像真人一样用，不刷屏】',
     '- 合适时机：被戳中笑点/槽点、接梗、怼人、赞同、自嘲、安慰、无语、赢了/输了、告别/晚安、别人发了表情时回一张，都可以自然用。',
-    '- 频率：普通闲聊不用每条都配；大约每 3~5 轮来一张就够，热闹/玩梗时可以更密，但不要连续刷屏。',
+    '- 频率：普通闲聊大约每 1~2 条回复就配一张；接梗、吐槽、被夸、撂狠话、装委屈这类有情绪的，该配就配。只有两种情况不配：话题严肃/正在办正事，或者上一两条刚配过——别连着刷同一套图。',
     '- 选择：优先用备注（desc）和你的记忆（localNote/tags）能准确对上语境的；没有备注/不确定的表情，先 get_sticker_image 看图再决定，不要瞎发。',
     '- 用哪套图：优先 whale-memes__send_meme（梗鲸图库 2000+ 张，本地秒出）；它报错或没有贴切的图，再试 reply-meme__find_meme（按语气关键词找）；send_sticker 只用于明确要「QQ 收藏表情」的场合（就那么几张）。',
     '- 发送顺序【关键】：表情工具是把图**当场发出去**的，所以先调表情工具 → 再调 send_message 说那句话。反过来基本不会成功——每次运行通常只有一轮发言机会，send_message 一发出这轮就结束了，没有"再补一张图"的下一轮。一条消息只能是一张表情，不能在同一气泡里附带文字。',
