@@ -30,7 +30,7 @@ import { QrRefreshGuard } from './qr-refresh-guard.js';
 import { OneBotHealth } from './onebot-health.js';
 import { ScheduledTaskRunner } from './scheduled-tasks.js';
 import { createEventBus, todayKey } from './util.js';
-import { loadPlugins, watchPlugins, unloadSkill, listInstalledDirs, SKILL_DIRS } from './plugin-loader.js';
+import { loadPlugins, watchPlugins, unloadSkill, listInstalledDirs, normalizeInstalledDirNames, SKILL_DIRS } from './plugin-loader.js';
 import { skillManager, looksLikeSecretKey } from './skills/manager.js';
 import { setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
 import { listTools, getToolAvailability } from './tool-registry.js';
@@ -1384,11 +1384,14 @@ export function createApp({ log = console.log } = {}) {
             }
           }
         }
-        if (removed.length) {
+        // 顺带把 `id_1` `id_2` 这种安装器产物改回清单 id：
+        // 配置里的绝对路径（如 skills/voxcpm-voice/assets/reference.wav）才继续有效
+        const renamed = normalizeInstalledDirNames({ log });
+        if (removed.length || renamed.length) {
           await reloadSkills({ reason: 'dedupe' });
           emit('skills-changed', { at: Date.now() });
         }
-        return json(res, 200, { ok: true, removed });
+        return json(res, 200, { ok: true, removed, renamed });
       }
 
       // 安装：body { filename, dataBase64, type?: 'skill'|'plugin' }

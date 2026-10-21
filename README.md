@@ -24,6 +24,15 @@
 
 一次处理的成本 ≈ 系统提示 + 存档摘要，是**恒定小份**，不再随历史膨胀。
 
+## 相关文档
+
+| 文档 | 内容 |
+|---|---|
+| [DEPLOY.md](DEPLOY.md) | 部署（systemd / Docker / 远端） |
+| [EXTENSIONS.md](EXTENSIONS.md) | 扩展开发（清单字段、钩子、api、configSchema 支持的控件） |
+| [MIGRATION.md](MIGRATION.md) | **换机器迁移**：哪些不在 git 里、`scripts/migrate.mjs` 导出/导入、检查清单 |
+| [CHANGELOG.md](CHANGELOG.md) | 更新日志 |
+
 ## 快速开始（三步）
 
 ### 前置：QQ 协议端

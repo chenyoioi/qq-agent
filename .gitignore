@@ -49,3 +49,23 @@ data/napcat-qrcode.png
 data/whale-memes/
 data/account.json
 data/knowledge/
+
+# ── 运行期数据（用户内容 / 缓存 / 插件状态）──────────────────────────────
+# 这些都不入库：换机器用 scripts/migrate.mjs 打包搬走（见 MIGRATION.md）。
+# 注意 gitignore 不支持行尾注释，注释必须单独一行，否则整行会被当成 pattern。
+# 表情图库镜像：GB 级缓存，可重新拉取
+data/gallery-mirror/
+# 梗图索引缓存
+data/whale-memes/
+# 额度账本：谁用了多少 token
+data/quota-guard/
+# 插件状态/存档
+data/sticker-cadence/
+data/sukuna-raid/
+data/hot-trends.json
+data/video-watch/
+data/sing-cache/
+data/voice-song/
+# 个人人设备份
+data/persona-*.md
+data/persona-*.json

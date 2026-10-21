@@ -569,6 +569,33 @@ export function listInstalledDirs({ roots = null } = {}) {
 }
 
 /**
+ * 把安装器留下的 `id_N` 目录名改回清单 id（新名字没被占用时）。
+ *
+ * 早年安装器遇到同名目录就递增后缀，于是留下 `voxcpm-voice_1`、`early-finish_3`。
+ * 名字一乱，配置里那些**绝对路径**就全指空了（例如
+ * `skills/voxcpm-voice/assets/reference.wav`），插件会静默退回到内置默认值。
+ * 只改 "id_数字" 这种安装器产物，用户自己起的名不动。
+ */
+export function normalizeInstalledDirNames({ roots = null, log = console.log } = {}) {
+  const renamed = [];
+  for (const d of listInstalledDirs({ roots })) {
+    if (!d.id || d.name === d.id) continue;
+    const escaped = d.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!new RegExp(`^${escaped}_\\d+$`).test(d.name)) continue;
+    const target = path.join(path.dirname(d.dir), d.id);
+    if (fs.existsSync(target)) continue;
+    try {
+      fs.renameSync(d.dir, target);
+      renamed.push(`${d.relDir} → ${path.basename(path.dirname(d.dir))}/${d.id}`);
+    } catch (error) {
+      log(`[skill] 目录改名失败 ${d.relDir}：${error?.message ?? error}`);
+    }
+  }
+  if (renamed.length) log(`[skill] 目录名归一：${renamed.join('、')}`);
+  return renamed;
+}
+
+/**
  * 加载全部 Skill（skills/ + plugins/）。
  * 幂等：重复调用会重新加载并覆盖同 id 的 Skill（热重载依赖这个语义）。
  */

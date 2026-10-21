@@ -1,5 +1,33 @@
 # 更新日志
 
+## 1.1.29（2026-10-21）
+
+### 换机器迁移：`scripts/migrate.mjs` + MIGRATION.md
+
+「GitHub 上能不能无损搬到另一台机器」——代码能，**其余大部分不在 git 里**，所以加了迁移工具：
+
+- `node scripts/migrate.mjs export [--with-history] [--no-secrets]`
+  把 `data/config.json`、`plugins/` + `skills/`（官网装的扩展）、`data/` 运行期状态
+  （额度账本、定时任务、扩展键值存储、表情状态……）打成一个约 1MB 的 tgz；
+  `--with-history` 连 `sessions/messages/memory` 一起带走。
+  默认排除 `gallery-mirror`（GB 级缓存）、`whale-memes` 索引、日志、二维码 —— 都能重拉；
+- `node scripts/migrate.mjs import <包> [--target 目录] [--force] [--dry-run]`
+  写回代码目录：扩展已存在则跳过（`--force` 覆盖）、`config.json` 里指向旧项目目录的
+  绝对路径自动改写、协议端目录自动探测并改写、旧配置先备份成
+  `config.json.pre-import-<时间>`、`_N` 目录名归一回清单 id、
+  最后列出配置里在新机器上**不存在的绝对路径**；
+- `MIGRATION.md`：哪些在 git、三步迁移、迁移后检查清单、常见坑（协议端要重装/重扫码、
+  systemd 单元别拷、先 `git push` 再 clone）。
+
+### 顺手修掉的两个迁移隐患
+
+- **`.gitignore` 补漏**：`data/gallery-mirror/`（2.3GB 图库镜像）、`data/quota-guard/`（额度账本）、
+  `data/sticker-cadence/`、`data/sukuna-raid/`、`data/hot-trends.json`、`data/persona-*.md`
+  等等此前**没被忽略** —— 一次 `git add -A` 就会把用户数据和 2GB 缓存提交进仓库；
+- **`_N` 目录名归一**：清理重复副本后保留的目录叫 `voxcpm-voice_1`、`early-finish_3`，
+  而配置里的绝对路径写的是 `skills/voxcpm-voice/assets/reference.wav` ——
+  改名后路径才对得上（`POST /api/skills/dedupe` 现在会顺带改名；迁移导入也会做）。
+
 ## 1.1.28（2026-10-21）
 
 ### 工具清单可以卸载扩展了
