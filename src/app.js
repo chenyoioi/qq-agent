@@ -31,7 +31,7 @@ import { OneBotHealth } from './onebot-health.js';
 import { ScheduledTaskRunner } from './scheduled-tasks.js';
 import { createEventBus, todayKey } from './util.js';
 import { loadPlugins, watchPlugins, unloadSkill, SKILL_DIRS } from './plugin-loader.js';
-import { skillManager } from './skills/manager.js';
+import { skillManager, looksLikeSecretKey } from './skills/manager.js';
 import { setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
 import { listTools, getToolAvailability } from './tool-registry.js';
 import { KB_TOOL_NAMES } from './tools.js';
@@ -54,10 +54,6 @@ try {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.resolve(__dirname, '..', 'ui');
-
-// 密钥类字段名：清单里没标 secret 时的兜底判定。
-// 与 skills/manager.js 的 settingsView() 用同一套规则（含 cookie）。
-const SKILL_SECRET_KEY_RE = /key|token|secret|password|cookie/i;
 
 // ── 白名单判断（移植自原版 allowed()） ───────────────────────────────────
 function allowed(kind, id, cfg) {
@@ -124,7 +120,7 @@ export function createApp({ log = console.log } = {}) {
   function skillSettingsMeta(id, entry) {
     const defaults = {};
     for (const [k, v] of Object.entries(entry?.manifest?.settings || {})) {
-      defaults[k] = (typeof v === 'string' && SKILL_SECRET_KEY_RE.test(k)) ? '' : v;
+      defaults[k] = (typeof v === 'string' && looksLikeSecretKey(k)) ? '' : v;
     }
     let configMtime = null;
     const stored = getConfig()?.skills?.[id];
@@ -1269,7 +1265,8 @@ export function createApp({ log = console.log } = {}) {
         for (const [k, v] of Object.entries(body.settings || {})) {
           if (!allowed.size || !allowed.has(k)) continue;
           // 密文字段收到掩码或空串 = 不修改
-          if (v === '******' || (typeof v === 'string' && v.trim() === '' && /key|token|secret|password|cookie/i.test(k))) continue;
+          // 密文字段收到掩码或空串 = 不修改（判定与 settingsView 的掩码规则同一套）
+          if (v === '******' || (typeof v === 'string' && v.trim() === '' && looksLikeSecretKey(k))) continue;
           patch[k] = v;
         }
         if (Object.keys(patch).length) setSkillConfig(id, patch);

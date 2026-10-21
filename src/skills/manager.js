@@ -22,6 +22,23 @@ import { isSkillEnabledInConfig, getSkillConfig } from './config.js';
 const DEFAULT_HOOK_TIMEOUT_MS = 5000;
 
 /**
+ * 字段名像不像密钥（用于把值掩码成 ******、配置面板渲染成密码框）。
+ *
+ * 必须**按词**匹配，不能像老写法那样直接 `/key|token|.../i` 查子串：
+ * group-manner 的 `interestKeywords`（兴趣关键词）里含 "key"，
+ * 被当成密钥整段掩码 —— 设置面板里只能看到 ******，用户既看不懂也改不了那一列话题词。
+ * 按 camelCase / 下划线 / 连字符切词后整词比对，`apiKey`、`MUSIC_U_cookie`、`secret`
+ * 照样命中，`interestKeywords`、`keywords`、`hotkeys` 不会。
+ */
+const SECRET_WORD_RE = /^(api-?keys?|keys?|tokens?|secrets?|cookies?|passwords?|passwd|pwd|creds?|credentials?)$/i;
+
+export function looksLikeSecretKey(key) {
+  return String(key ?? '')
+    .split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+    .some((part) => SECRET_WORD_RE.test(part));
+}
+
+/**
  * 天生允许**多个提供者**的能力。
  *
  * 大多数能力是"单提供者"（比如 video.frames：抽帧只能有一份实现），
@@ -320,7 +337,7 @@ export class SkillManager {
    *
    * ⚠️ secret 判定还必须**下钻一层**（2026-09-26 审查二轮发现）：
    *   ① 字段名兜底：manifest 作者忘了在 configSchema 标 secret 时，
-   *      名字命中 /key|token|secret|cookie|password/i 的字符串字段同样脱敏
+   *      名字像密钥（见 looksLikeSecretKey：按词匹配，不是查子串）的字符串字段同样脱敏
    *      —— skills/web-fetch 的 cookie（type=internal，无 secret 标记）曾把
    *      SESSDATA 明文回传给浏览器。
    *   ② 数组内对象：plugins/account-pool 的 settings.accounts[].key 存的是
@@ -333,10 +350,9 @@ export class SkillManager {
     if (!skill) return {};
     const values = this.settingsOf(id);
     const schema = skill.manifest.configSchema || {};
-    const SECRET_NAME_RE = /key|token|secret|password|cookie/i;
     const mask = (v) => (String(v ?? '').trim() ? '******' : '');
     const isSecretField = (k) => Boolean(schema[k]?.secret)
-      || (SECRET_NAME_RE.test(k) && typeof values[k] === 'string');
+      || (looksLikeSecretKey(k) && typeof values[k] === 'string');
     const out = {};
     for (const [k, v] of Object.entries(values)) {
       if (isSecretField(k)) { out[k] = mask(v); continue; }
@@ -347,7 +363,7 @@ export class SkillManager {
           if (!item || typeof item !== 'object') return item;
           const clone = { ...item };
           for (const [ik, iv] of Object.entries(clone)) {
-            if (SECRET_NAME_RE.test(ik) && typeof iv === 'string' && iv.trim()) clone[ik] = '******';
+            if (looksLikeSecretKey(ik) && typeof iv === 'string' && iv.trim()) clone[ik] = '******';
           }
           return clone;
         });

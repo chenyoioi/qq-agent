@@ -4,6 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>QQ Agent</title>
+  <!-- 主题必须在样式表之前定下来：否则先按深色画一帧再切浅色，能看到闪一下。
+       有存过就以存的为准，没存过就跟随系统（浅色系统给浅色）。 -->
+  <script>
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('qq-agent-theme'); } catch (e) { /* 隐私模式读不了 */ }
+      if (t !== 'light' && t !== 'dark') {
+        t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+      }
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -18,6 +30,7 @@
       <span id="usage-label" class="muted">今日：-</span>
       <span class="sep"></span>
       <span id="tz-label" class="muted" title="所有时间均按北京时间显示（进程已锁 TZ=Asia/Shanghai）">北京时间 --:--</span>
+      <button id="theme-toggle" class="btn btn-small" title="切换浅色 / 深色">🌙 深色</button>
       <button id="pause-btn" class="btn btn-small">暂停</button>
     </div>
   </header>

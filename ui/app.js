@@ -56,6 +56,45 @@ function esc(s) {
 
 const STATUS_LABEL = { done: '已发言', noreply: '未回复', running: '运行中', error: '出错', aborted: '中止' };
 
+// ── 主题（浅色 / 深色）──────────────────────────────────────────
+// 首屏防闪由 index.html 里的内联脚本负责（它在样式表之前把 data-theme 定好），
+// 这里只管切换、记忆和按钮文案。颜色本身全在 style.css 的变量里，切主题不碰 DOM 样式。
+const THEME_KEY = 'qq-agent-theme';
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
+
+function applyTheme(theme, { persist = true } = {}) {
+  const t = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, t); } catch { /* 隐私模式下存不了，只影响"下次还记得" */ }
+  }
+  const btn = $('#theme-toggle');
+  if (btn) {
+    btn.textContent = t === 'light' ? '☀ 浅色' : '🌙 深色';
+    btn.title = t === 'light' ? '当前浅色主题，点击切到深色' : '当前深色主题，点击切到浅色';
+  }
+}
+
+function initTheme() {
+  applyTheme(currentTheme(), { persist: false });   // 只同步按钮文案，不动已存的选择
+  $('#theme-toggle')?.addEventListener('click', () => {
+    applyTheme(currentTheme() === 'light' ? 'dark' : 'light');
+  });
+  // 用户没手动选过时跟随系统主题变化（选过就尊重用户，不再跟着系统跳）
+  try {
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (ev) => {
+      let stored = null;
+      try { stored = localStorage.getItem(THEME_KEY); } catch { /* 同上 */ }
+      if (!stored) applyTheme(ev.matches ? 'light' : 'dark', { persist: false });
+    });
+  } catch { /* 老浏览器没有 matchMedia 事件，忽略 */ }
+}
+
+initTheme();
+
 // ── 启动 loading 壳：页面先渲染，等服务可用后自动隐藏 ──
 const loadingOverlay = $('#loading-overlay');
 const loadingStatus = $('#loading-status');
@@ -197,8 +236,15 @@ let skillQuery = '';                // 卡片搜索词：客户端过滤，不�
 let skillFilter = 'all';            // 状态筛选：all | active | disabled | broken
 
 // 密钥类字段的兜底判定：清单作者忘标 secret 时按名字识别。
-// 必须与后端 settingsView() 用同一套正则，否则前端会当成普通文本渲染成明文输入框。
-const SKILL_SECRET_RE = /key|token|cookie|secret|password/i;
+// 必须与后端 looksLikeSecretKey()（skills/manager.js）用同一套规则：
+// **切词后整词匹配**，不是查子串 —— 否则 group-manner 的 interestKeywords
+// （兴趣关键词）会被当成密钥，渲染成一个只能看见 ****** 的密码框。
+const SKILL_SECRET_WORD_RE = /^(api-?keys?|keys?|tokens?|secrets?|cookies?|passwords?|passwd|pwd|creds?|credentials?)$/i;
+function looksLikeSecretKey(key) {
+  return String(key ?? '')
+    .split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+    .some((part) => SKILL_SECRET_WORD_RE.test(part));
+}
 
 // 抽屉的编辑态。草稿（draft）与快照（original）分开存：两者不同 = 有未保存修改。
 // original 只在「打开面板」和「保存成功」时刷新，撤销修改就是把 draft 拷回去。
@@ -446,7 +492,7 @@ function buildSkillFields(sk) {
     const hasDefault = has(spec, 'default') || has(defaults, key);
     const def = has(spec, 'default') ? spec.default : defaults[key];
     const value = values[key] !== undefined ? values[key] : def;
-    const secret = type === 'string' && (!!spec.secret || SKILL_SECRET_RE.test(key));
+    const secret = type === 'string' && (!!spec.secret || looksLikeSecretKey(key));
     const len = (v) => (v === undefined || v === null ? 0 : String(v).length);
     const strValues = [value, def].filter((v) => typeof v === 'string' && v);
     // 多值列表（用 | 或逗号连起来、或本来就带换行）：单行 input 里改起来容易越界，同样给文本域
