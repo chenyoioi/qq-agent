@@ -19,11 +19,14 @@
 - `MIGRATION.md`：哪些在 git、三步迁移、迁移后检查清单、常见坑（协议端要重装/重扫码、
   systemd 单元别拷、先 `git push` 再 clone）。
 
-### 顺手修掉的两个迁移隐患
+### 顺手修掉的迁移隐患
 
 - **`.gitignore` 补漏**：`data/gallery-mirror/`（2.3GB 图库镜像）、`data/quota-guard/`（额度账本）、
   `data/sticker-cadence/`、`data/sukuna-raid/`、`data/hot-trends.json`、`data/persona-*.md`
   等等此前**没被忽略** —— 一次 `git add -A` 就会把用户数据和 2GB 缓存提交进仓库；
+- **每日备份带上扩展目录**：`scripts/backup.sh` 之前只备 `data/`，而 `plugins/` `skills/`
+  **不在 git 里** —— 机器挂了官网装的插件/技能就没了。现在同包备份 `data + plugins + skills`
+  （2.6MB，排除 node_modules），并兼容轮转旧命名的 `data-*.tgz`；
 - **`data/config.json` 权限收紧到 600**：这份文件里有模型 Key、协议端令牌、B 站 cookie，
   此前按默认 umask 写成 `644`（同机其它用户可读）。现在落盘即以 `mode: 0o600` 写入并 chmod，
   已有文件也已改为 600；
