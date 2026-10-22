@@ -7,6 +7,36 @@ function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}${path}`;
 }
 
+// 网关类状态码的人话解释：这类码几乎都不是"你配错了"，而是中转站/上游挂了。
+// 写进错误文本，用户和日志一眼能看懂，不用去查 554 是什么。
+const GATEWAY_CODES = {
+  502: '中转站网关 502：上游模型不可用',
+  503: '服务暂时不可用（上游过载/维护）',
+  504: '上游模型响应超时',
+  520: 'CDN 未知错误（源站异常）',
+  521: 'CDN 源站已关闭',
+  522: 'CDN 连接源站超时',
+  523: 'CDN 源站不可达',
+  524: 'CDN 等待源站响应超时',
+  525: 'CDN 与源站 TLS 握手失败',
+  526: 'CDN 源站证书无效',
+  527: 'CDN 与源站连接被中断',
+  554: '上游/网关异常（中转站返回的非标准码，通常是上游节点失败或被限流）'
+};
+
+function gatewayHint(status, body = '') {
+  const code = Number(status) || 0;
+  const known = GATEWAY_CODES[code];
+  if (!known) return '';
+  // 中转站自己已经给出 code/message 时优先展示它的原文
+  let detail = '';
+  try {
+    const j = JSON.parse(body);
+    detail = [j.code, j.message].filter(Boolean).join(' · ');
+  } catch { /* 不是 JSON 就算了 */ }
+  return `（${known}${detail ? `；服务端说明：${String(detail).slice(0, 120)}` : ''}。这类错误与你的 Key/地址无关，重试或换模型/换提供商）`;
+}
+
 function authHeaders(apiKey) {
   return apiKey ? { authorization: `Bearer ${apiKey}` } : {};
 }
@@ -81,8 +111,10 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     }
     if (res.ok) { finalBody = { ...finalBody, model }; break; }
     const text = await res.text().catch(() => '');
-    lastError = new Error(`模型 API HTTP ${res.status}：${text.slice(0, 500)}`);
-    if (![408, 409, 425, 429, 500, 502, 503, 504].includes(res.status)) break;
+    lastError = new Error(`模型 API HTTP ${res.status}：${text.slice(0, 500)}${gatewayHint(res.status, text)}`);
+    // 5xx 一律可重试：中转站/CDN 会吐 520~527、554 这类非标准网关码，
+    // 以前只认 500/502/503/504，碰上 554 就直接判死，备用模型完全没机会上场。
+    if (!(res.status >= 500 || [408, 409, 425, 429].includes(res.status))) break;
     if (tryModels.indexOf(model) < tryModels.length - 1) {
       console.warn(`[llm] ${model} 返回 ${res.status}，换备用模型重试`);
     }

@@ -3116,17 +3116,18 @@ function bindSettingsEvents(c) {
     btn.textContent = '测试中…';
     if (out) out.textContent = '';
     try {
+      const providerId = $('#cfg-provider')?.value.trim() || '';
       const baseUrl = $('#cfg-baseurl')?.value.trim() || '';
       const apiKey = $('#cfg-apikey')?.value.trim() || '';
       const model = $('#cfg-model')?.value.trim() || '';
-      const r = await api('/api/providers/test-chat', {
+      // 走 test-one：既验 /models 也真发一次 chat —— 「能列模型」不等于「能生成」
+      const r = await api('/api/providers/test-one', {
         method: 'POST',
-        body: JSON.stringify({ baseUrl, apiKey, model })
+        body: JSON.stringify({ providerId, baseUrl, apiKey, model })
       });
       const res = r.result || {};
-      if (out) out.textContent = res.ok
-        ? `✓ 测试通过（${res.latencyMs}ms）：${res.note || '请求成功'}`
-        : `✗ 测试失败：${res.note || '未知错误'}`;
+      if (out) out.textContent = `${res.ok ? '✓' : '✗'} ${res.note || '未知结果'}`;
+      if (out) out.className = `hint ${res.ok ? 'ok-text' : 'warn-text'}`;
     } catch (e) {
       if (out) out.textContent = `测试失败：${e.message}`;
     }
@@ -3250,7 +3251,7 @@ function bindSettingsEvents(c) {
       try {
         const r = await api('/api/providers/test-one', { method: 'POST', body: JSON.stringify({ providerId: pid }) });
         const res = r.result || {};
-        if (line) line.textContent = res.ok ? `✓ 连通（${res.latencyMs}ms）` : `✗ ${res.note || '失败'}`;
+        if (line) line.textContent = (res.ok ? '✓ ' : '✗ ') + (res.note || '失败');
         if (line) line.className = `provider-test-line ${res.ok ? 'ok-text' : 'warn-text'}`;
       } catch (e) {
         if (line) line.textContent = `✗ ${e.message}`;

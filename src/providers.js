@@ -245,15 +245,32 @@ export async function testModelChat({ baseUrl, apiKey, model }) {
   }
 }
 
-/** 测试一个提供商端点（按 providerId 查目录，或直接给 baseUrl/apiKey）。 */
-export async function testOneProvider({ providerId = '', baseUrl = '', apiKey = '' } = {}) {
+/**
+ * 测试一个提供商端点（按 providerId 查目录，或直接给 baseUrl/apiKey）。
+ *
+ * 分两步，因为「能列模型」和「能真的生成」是两件事 ——
+ * 中转站常见情况就是 /models 200、chat 却 502/504/554（上游挂了）。
+ *   models：GET /models，验地址与 Key
+ *   chat  ：POST /chat/completions，验真正能出字
+ */
+export async function testOneProvider({ providerId = '', baseUrl = '', apiKey = '', model = '' } = {}) {
   let p = currentProviders().find((x) => x.id === providerId);
   if (!p) {
     const base = normalizeBaseUrl(baseUrl);
     if (!base) return { ok: false, verdict: 'no-endpoint', note: '没有端点地址', latencyMs: 0 };
     p = { id: providerId || '__tmp__', displayName: hostDisplayName(base), baseURL: base, apiKey: apiKey || '', models: [] };
   }
-  return testProvider(p);
+  const endpoint = await testProvider(p);
+  const chatModel = String(model || (p.models || [])[0] || '').trim();
+  const chat = chatModel
+    ? await testModelChat({ baseUrl: p.baseURL, apiKey: p.apiKey, model: chatModel })
+    : { ok: false, note: '该提供商没有模型，无法测试对话' };
+  const ok = endpoint.ok && chat.ok;
+  const note = [
+    endpoint.ok ? `目录 ✓ ${endpoint.modelCount ? `${endpoint.modelCount} 个模型` : '可用'}` : `目录 ✗ ${endpoint.note}`,
+    chat.ok ? `对话 ✓ ${chatModel}（${chat.latencyMs}ms）` : `对话 ✗ ${chatModel || '—'}：${chat.note}`
+  ].join(' · ');
+  return { ...endpoint, ok, chat, chatModel, note, verdict: ok ? 'ok' : (endpoint.ok ? 'chat-failed' : endpoint.verdict) };
 }
 
 /** 改提供商的 Base URL / 显示名（中转站换域名时用，不用删了重加）。 */
