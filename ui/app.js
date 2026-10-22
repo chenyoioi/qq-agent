@@ -2586,6 +2586,7 @@ function renderSettingsSidebar() {
   const menu = [
     ['capabilities', '能力总览'],
     ['api', '模型 API'],
+    ['search', '联网搜索'],
     ['persona', '人设'],
     ['allow', '聊天白名单'],
     ['chat', '聊天设置'],
@@ -2624,6 +2625,7 @@ function renderSettingsSection(c) {
   const sections = {
     capabilities: () => renderCapabilitiesSection(c),
     api: () => renderApiSection(c),
+    search: () => renderSearchSection(c),
     persona: () => renderPersonaSection(c),
     allow: () => renderAllowSection(c),
     chat: () => renderChatSection(c),
@@ -2639,96 +2641,135 @@ function renderSettingsSection(c) {
     ${render()}`;
 }
 
+/** 单个提供商行：改 Key / 改地址 / 测试 / 删除 都在这里。 */
+function providerRowHtml(p, c) {
+  const active = p.id === c.api.provider;
+  const models = Array.isArray(p.models) ? p.models : [];
+  return `<div class="provider-row ${active ? 'active' : ''}" data-pid="${esc(p.id)}">
+    <div class="provider-main">
+      <span class="provider-name">${esc(p.displayName || p.id)}</span>
+      ${active ? '<span class="provider-badge">当前使用</span>' : ''}
+      ${p.hasKey ? '<span class="provider-badge ok">有 Key</span>' : '<span class="provider-badge warn">无 Key</span>'}
+      <div class="provider-meta muted">${esc(p.baseURL || '')} · ${models.length} 个模型${active && c.api.model ? ` · 当前 ${esc(c.api.model)}` : ''}</div>
+      <div class="provider-test-line muted" data-test-line="${esc(p.id)}"></div>
+    </div>
+    <div class="provider-actions">
+      <button class="btn btn-small" data-act="provider-set-key" data-pid="${esc(p.id)}">改 Key</button>
+      <button class="btn btn-small" data-act="provider-edit-url" data-pid="${esc(p.id)}">改地址</button>
+      <button class="btn btn-small" data-act="provider-test" data-pid="${esc(p.id)}">测试</button>
+      <button class="btn btn-small btn-danger" data-act="provider-delete" data-pid="${esc(p.id)}">删除</button>
+    </div>
+  </div>`;
+}
+
+/**
+ * 模型 API 板块。
+ *
+ * 以前这一屏同时塞了：当前模型、Base URL、明文 Key 输入框、搜索设置、添加提供商表单、模型行编辑……
+ * 又长又看不出"我现在到底在用哪家、Key 有效没"。现在分区：
+ *   ① 当前使用（卡片 + 切换/测试）
+ *   ② 提供商（每行 改Key/改地址/测试/删除；添加表单收进折叠）
+ *   ③ 高级（温度/轮数/图片输入，默认收起）
+ * 联网搜索挪到侧栏独立一项。
+ */
 function renderApiSection(c) {
-  const currentProvider = (state.providers || []).find((p) => p.id === c.api.provider);
-  const currentModelDisplay = (currentProvider?.modelNames || {})[c.api.model] || c.api.model;
+  const providers = state.providers || [];
+  const cur = providers.find((p) => p.id === c.api.provider);
+  const modelLabel = (cur?.modelNames || {})[c.api.model] || c.api.model || '';
+  const hasKey = !!String(c.api.apiKey || '').trim();
+  const modelMissing = c.api.model && cur && !(cur.models || []).includes(c.api.model);
   return `
     <h3 id="settings-api">模型 API</h3>
-    <div class="field"><label>模型目录（点击选择）</label>
-      <div style="display:flex;gap:8px">
-        <input type="text" id="cfg-model-pick" readonly placeholder="点击选择模型" value="${esc(currentModelDisplay || '')}" style="flex:1;cursor:pointer" />
-        <button class="btn btn-small" id="test-provider-btn">测试连通性</button>
-        <span id="provider-test-result" class="muted" style="align-self:center"></span>
+
+    <div class="api-current ${hasKey && cur ? '' : 'warn'}">
+      <div class="api-current-main">
+        <div class="api-current-model">${modelLabel ? esc(modelLabel) : '<span class="muted">尚未选择模型</span>'}</div>
+        <div class="api-current-meta muted">${cur
+          ? `${esc(cur.displayName || cur.id)} · ${esc(c.api.baseUrl || cur.baseURL || '')}`
+          : '还没有选定提供商 —— 点右侧「切换模型」选一个'}</div>
+        <div class="api-current-badges">
+          <span class="provider-badge ${hasKey ? 'ok' : 'warn'}">${hasKey ? 'Key 已配置' : '缺少 API Key'}</span>
+          <span class="provider-badge">图片输入 ${c.api.vision !== false ? '开' : '关'}</span>
+          <span class="provider-badge">温度 ${esc(c.api.temperature)}</span>
+          ${modelMissing ? '<span class="provider-badge warn">该模型不在目录里</span>' : ''}
+        </div>
       </div>
-      <div class="hint" id="provider-hint">${currentProvider ? `当前：${esc(currentProvider.displayName)} · ${esc(c.api.model || '未选模型')} @ ${esc(currentProvider.baseURL)}` : '尚未选择模型'}</div>
-      <input type="hidden" id="cfg-provider" value="${esc(c.api.provider || '')}" />
-      <input type="hidden" id="cfg-model" value="${esc(c.api.model || '')}" />
+      <div class="api-current-actions">
+        <button class="btn btn-primary btn-small" id="pick-model-btn">切换模型</button>
+        <button class="btn btn-small" id="test-provider-btn">测试连通性</button>
+      </div>
     </div>
-    <div class="field-row">
-      <div class="field"><label>当前 Base URL</label>
-        <div style="display:flex;gap:8px">
-          <input type="text" id="cfg-baseurl" readonly value="${esc(c.api.baseUrl)}" style="flex:1" />
-          <button class="btn btn-small" id="fetch-current-models-btn">获取列表</button>
-        </div></div>
-      <div class="field"><label>当前 API Key</label><input type="text" id="cfg-apikey" value="${esc(c.api.apiKey)}" /></div>
+    <div class="hint" id="provider-test-result" style="min-height:18px"></div>
+
+    <input type="hidden" id="cfg-provider" value="${esc(c.api.provider || '')}" />
+    <input type="hidden" id="cfg-model" value="${esc(c.api.model || '')}" />
+    <input type="hidden" id="cfg-baseurl" value="${esc(c.api.baseUrl || '')}" />
+    <input type="hidden" id="cfg-apikey" value="${esc(c.api.apiKey || '')}" />
+
+    <h3>提供商</h3>
+    <div class="hint" style="margin-bottom:8px">每个提供商可单独改 Key / 改地址 / 测试 / 删除。删掉的若是正在使用的那家，会自动切到剩下的第一家。</div>
+    <div id="provider-list" class="provider-list">
+      ${providers.length ? providers.map((p) => providerRowHtml(p, c)).join('') : '<div class="hint">还没有提供商，展开下面的「＋ 添加提供商」。</div>'}
     </div>
-    <div class="field-row">
-      <div class="field"><label>温度</label><input type="number" id="cfg-temperature" step="0.1" min="0" max="2" value="${esc(c.api.temperature)}" /></div>
-      <div class="field"><label>单次运行最大工具轮数</label><input type="number" id="cfg-maxrounds" min="1" max="40" value="${esc(c.api.maxRounds)}" /></div>
-    </div>
-    <div class="checkbox-row"><input type="checkbox" id="cfg-vision" ${c.api.vision !== false ? 'checked' : ''} />
-      <label for="cfg-vision">图片输入（关闭则移除看图工具，模型只会看到 [图片] 占位符）</label>
-      <span id="vision-switch-hint" class="muted" style="font-size:12px;align-self:center"></span></div>
+
+    <details class="api-fold" ${providers.length ? '' : 'open'}>
+      <summary>＋ 添加提供商</summary>
+      <div class="api-fold-body">
+        <div class="field"><label>Base URL</label>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="new-baseurl" placeholder="https://api.example.com/v1" style="flex:1" />
+            <button class="btn btn-small" id="fetch-models-btn">获取列表</button>
+          </div>
+          <div class="hint">「获取列表」用这个地址 + Key 拉模型目录，弹窗里勾选加入。</div></div>
+        <div class="field"><label>API Key</label><input type="text" id="new-apikey" placeholder="sk-..." autocomplete="off" /></div>
+        <div class="field"><label>模型（左：模型 ID；右：显示名；可多行）</label>
+          <div id="model-rows"></div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button class="btn btn-small" id="add-model-row-btn">＋ 添加一行</button>
+            <button class="btn btn-primary btn-small" id="confirm-add-provider-btn">确认添加</button>
+          </div></div>
+        <div class="hint" id="provider-action-hint"></div>
+      </div>
+    </details>
+
+    <details class="api-fold">
+      <summary>高级设置（温度 / 工具轮数 / 图片输入）</summary>
+      <div class="api-fold-body">
+        <div class="field-row">
+          <div class="field"><label>温度</label><input type="number" id="cfg-temperature" step="0.1" min="0" max="2" value="${esc(c.api.temperature)}" /></div>
+          <div class="field"><label>单次运行最大工具轮数</label><input type="number" id="cfg-maxrounds" min="1" max="40" value="${esc(c.api.maxRounds)}" /></div>
+        </div>
+        <div class="checkbox-row"><input type="checkbox" id="cfg-vision" ${c.api.vision !== false ? 'checked' : ''} />
+          <label for="cfg-vision">图片输入（关闭则移除看图工具，模型只看到 [图片] 占位符）</label>
+          <span id="vision-switch-hint" class="muted" style="font-size:12px;align-self:center"></span></div>
+        <div class="field" style="margin-top:8px"><label>删除模型</label>
+          <div><button class="btn btn-danger btn-small" id="delete-model-btn">删除模型…</button></div></div>
+      </div>
+    </details>`;
+}
+
+/** 联网搜索：从「模型 API」里拆出来，单独一屏。 */
+function renderSearchSection(c) {
+  return `
+    <h3 id="settings-search">联网搜索</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-websearch" ${c.webSearch?.enabled !== false ? 'checked' : ''} />
-      <label for="cfg-websearch">联网搜索：启用 web_search / web_fetch 工具</label></div>
+      <label for="cfg-websearch">启用联网搜索：给模型挂上 web_search / web_fetch 工具</label></div>
     <div class="field"><label>搜索引擎</label>
       <select id="cfg-searchprovider">
         <option value="auto" ${(c.webSearch?.provider || 'auto') === 'auto' ? 'selected' : ''}>自动（优先 AnySearch，失败回退 Bing）— 推荐</option>
-        <option value="anysearch" ${c.webSearch?.provider === 'anysearch' ? 'selected' : ''}>AnySearch（需配置 API key，结果更全）</option>
+        <option value="anysearch" ${c.webSearch?.provider === 'anysearch' ? 'selected' : ''}>AnySearch（需 API key，结果更全）</option>
         <option value="bing" ${c.webSearch?.provider === 'bing' ? 'selected' : ''}>Bing 网页抓取（免 key）</option>
       </select>
-      <div class="hint" style="margin-top:4px">未配置 key 时，自动模式会回退到 Bing 网页抓取。</div></div>
-    <div class="field"><label>AnySearch API Key</label>
+      <div class="hint" style="margin-top:4px">不填 key 时，自动模式会回退到 Bing 网页抓取。</div></div>
+    <div class="field"><label>AnySearch API Key（可多个轮换）</label>
       <div id="search-key-rows"></div>
       <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
         <button class="btn btn-small" type="button" id="add-search-key-btn">+ 添加一个 Key</button>
         <button class="btn btn-small btn-primary" type="button" id="save-search-keys-btn">保存 Key</button>
         <span id="search-key-result" class="muted"></span>
       </div>
-      <div class="hint" style="margin-top:4px">支持多个 Key 轮换（某个额度用尽时自动换下一个）。已保存的 Key 只显示首尾，重新填写才会覆盖；环境变量注入的 Key 优先且不在此显示。</div></div>
-    <div class="field"><label>搜索地址（高级：可替换为兼容 Bing 结果格式的引擎）</label><input type="text" id="cfg-searchurl" value="${esc(c.webSearch?.searchUrl || 'https://cn.bing.com/search')}" /></div>
-
-    <div class="settings-divider"></div>
-
-    <h3>已添加的提供商</h3>
-    <div class="hint" style="margin-bottom:8px">当前使用的那个不能直接删掉就完事：删除时如果它是当前使用的，会自动切到剩下的第一个提供商。</div>
-    <div id="provider-list" class="provider-list">
-      ${(state.providers || []).length ? (state.providers || []).map((p) => {
-        const active = p.id === c.api.provider;
-        const models = Array.isArray(p.models) ? p.models : [];
-        return `<div class="provider-row ${active ? 'active' : ''}" data-pid="${esc(p.id)}">
-          <div class="provider-main">
-            <span class="provider-name">${esc(p.displayName || p.id)}</span>
-            ${active ? '<span class="provider-badge">当前使用</span>' : ''}
-            ${p.hasKey ? '<span class="provider-badge ok">有 Key</span>' : '<span class="provider-badge warn">无 Key</span>'}
-            <div class="provider-meta muted">${esc(p.baseURL || '')} · ${models.length} 个模型</div>
-          </div>
-          <div class="provider-actions">
-            <button class="btn btn-small" data-act="provider-set-key" data-pid="${esc(p.id)}">改 Key</button>
-            <button class="btn btn-small btn-danger" data-act="provider-delete" data-pid="${esc(p.id)}">删除</button>
-          </div>
-        </div>`;
-      }).join('') : '<div class="hint">还没有提供商：用下面的「手动添加提供商」添加一个。</div>'}
-    </div>
-
-    <h3>手动添加提供商</h3>
-    <div class="field"><label>Base URL（可填写）</label>
-      <div style="display:flex;gap:8px">
-        <input type="text" id="new-baseurl" placeholder="例如 http://127.0.0.1:8787/v1 或 https://api.example.com/v1" style="flex:1" />
-        <button class="btn btn-small" id="fetch-models-btn">获取列表</button>
-      </div></div>
-    <div class="field"><label>API Key</label><input type="text" id="new-apikey" placeholder="sk-..." /></div>
-    <div class="field"><label>模型 id（两列：左侧模型 ID，右侧模型目录中显示的名字；可添加多行）</label>
-      <div id="model-rows"></div>
-      <div style="display:flex;gap:8px;margin-top:6px">
-        <button class="btn btn-small" id="add-model-row-btn">＋ 添加一行</button>
-      </div>
-      <div class="hint">「获取列表」会从上面的 Base URL 拉取模型，并在弹窗里勾选加入列表。</div></div>
-    <div class="field-row">
-      <div class="field"><button class="btn btn-primary" id="confirm-add-provider-btn">确认添加</button></div>
-      <div class="field"><button class="btn btn-danger" id="delete-model-btn">删除模型…</button></div>
-    </div>
-    <div class="hint" id="provider-action-hint"></div>`;
+      <div class="hint" style="margin-top:4px">已保存的 Key 只显示首尾，重新填写才会覆盖；环境变量注入的 Key 优先。</div></div>
+    <div class="field"><label>搜索地址（高级：可换成兼容 Bing 结果格式的引擎）</label><input type="text" id="cfg-searchurl" value="${esc(c.webSearch?.searchUrl || 'https://cn.bing.com/search')}" /></div>`;
 }
 
 function renderPersonaSection(c) {
@@ -3066,8 +3107,8 @@ function bindSettingsEvents(c) {
 
   // ── 模型 API 区块事件 ──
   // 点击文本框弹出选择模态框（无“选择”按钮）
-  const modelPickInput = $('#cfg-model-pick');
-  if (modelPickInput) modelPickInput.addEventListener('click', () => openModelPicker());
+  const pickModelBtn = $('#pick-model-btn');
+  if (pickModelBtn) pickModelBtn.addEventListener('click', () => openModelPicker());
   const testProviderBtn = $('#test-provider-btn');
   if (testProviderBtn) testProviderBtn.addEventListener('click', async () => {
     const btn = testProviderBtn;
@@ -3200,6 +3241,22 @@ function bindSettingsEvents(c) {
     const prov = (state.providers || []).find((x) => x.id === pid);
     if (!prov) return;
     if (btn.dataset.act === 'provider-set-key') { openProviderKeyModal(prov); return; }
+    if (btn.dataset.act === 'provider-edit-url') { openProviderUrlModal(prov); return; }
+    if (btn.dataset.act === 'provider-test') {
+      const line = document.querySelector(`[data-test-line="${pid}"]`);
+      if (line) line.textContent = '测试中…';
+      btn.disabled = true;
+      try {
+        const r = await api('/api/providers/test-one', { method: 'POST', body: JSON.stringify({ providerId: pid }) });
+        const res = r.result || {};
+        if (line) line.textContent = res.ok ? `✓ 连通（${res.latencyMs}ms）` : `✗ ${res.note || '失败'}`;
+        if (line) line.className = `provider-test-line ${res.ok ? 'ok-text' : 'warn-text'}`;
+      } catch (e) {
+        if (line) line.textContent = `✗ ${e.message}`;
+      }
+      btn.disabled = false;
+      return;
+    }
     if (btn.dataset.act === 'provider-delete') {
       const active = state.config?.api?.provider === pid;
       if (!confirm(`删除提供商「${prov.displayName || prov.id}」？\n\n${active ? '它正在被使用：删除后会自动切到剩下的第一个提供商。' : '它下面的模型会一起从目录里移除（不影响已保存的配置项）。'}`)) return;
@@ -3508,6 +3565,35 @@ function openProviderKeyModal(prov) {
   });
 }
 
+/** 改提供商的 Base URL / 显示名（中转站换域名，不用删了重加）。 */
+function openProviderUrlModal(prov) {
+  const overlay = modelModalShell({
+    head: `修改地址 · ${esc(prov.displayName || prov.id)}`,
+    body: `
+      <div class="field"><label>显示名</label><input type="text" id="prov-name-input" value="${esc(prov.displayName || '')}" /></div>
+      <div class="field"><label>Base URL</label><input type="text" id="prov-url-input" value="${esc(prov.baseURL || '')}" placeholder="https://api.example.com/v1" />
+        <div class="hint">以 /v1 结尾最常见；保存后如果这是当前使用的提供商，请求会立刻改发到新地址。</div></div>
+      <div class="hint" id="prov-url-result"></div>`,
+    foot: `<button class="btn" id="prov-url-cancel">取消</button>
+           <button class="btn btn-primary" id="prov-url-save">保存</button>`
+  });
+  const hint = overlay.querySelector('#prov-url-result');
+  overlay.querySelector('#prov-url-cancel')?.addEventListener('click', () => closeModelModal(overlay));
+  overlay.querySelector('#prov-url-save')?.addEventListener('click', async () => {
+    const baseURL = String(overlay.querySelector('#prov-url-input')?.value || '').trim();
+    const displayName = String(overlay.querySelector('#prov-name-input')?.value || '').trim();
+    if (!baseURL) { hint.textContent = 'Base URL 不能为空'; return; }
+    try {
+      await api('/api/providers/update', { method: 'POST', body: JSON.stringify({ id: prov.id, baseURL, displayName }) });
+      closeModelModal(overlay);
+      await loadSettings();
+      showToast('地址已更新', 'ok');
+    } catch (e) {
+      hint.textContent = '保存失败：' + e.message;
+    }
+  });
+}
+
 /** 选择模型：左提供商 / 右模型，点击模型后保存到当前 api 配置并关闭。 */
 function openModelPicker() {
   const providers = state.providers || [];
@@ -3739,6 +3825,9 @@ async function saveConfig({ quiet = false } = {}) {
       temperature: Number(val('#cfg-temperature', c.api.temperature)) || 0.8,
       maxRounds: Number(val('#cfg-maxrounds', c.api.maxRounds)) || 12
     };
+  }
+
+  if (sec === 'search') {
     patch.webSearch = {
       ...c.webSearch,
       enabled: chk('#cfg-websearch', c.webSearch?.enabled !== false),

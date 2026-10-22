@@ -256,6 +256,33 @@ export async function testOneProvider({ providerId = '', baseUrl = '', apiKey = 
   return testProvider(p);
 }
 
+/** 改提供商的 Base URL / 显示名（中转站换域名时用，不用删了重加）。 */
+export function updateProviderInfo(providerId, { baseURL, displayName } = {}) {
+  const id = String(providerId || '');
+  let changed = null;
+  const providers = currentProviders().map((p) => {
+    if (p.id !== id) return p;
+    changed = { ...p };
+    if (baseURL !== undefined) {
+      const base = normalizeBaseUrl(baseURL);
+      if (!base) throw new Error('Base URL 不能为空');
+      changed.baseURL = base;
+    }
+    if (displayName !== undefined && String(displayName).trim()) {
+      changed.displayName = String(displayName).trim();
+    }
+    return changed;
+  });
+  if (!changed) return null;
+  const patch = { providers };
+  // 改的是当前使用的提供商 → 同步 api.baseUrl，否则请求还发到旧地址
+  if (String(getConfig().api?.provider || '') === id && baseURL !== undefined) {
+    patch.api = { baseUrl: changed.baseURL };
+  }
+  updateConfig(patch);
+  return changed;
+}
+
 /** 新建提供商；若同 baseURL 已存在则合并模型。返回 { provider, created }。 */
 export function upsertProvider({ baseUrl, apiKey, models = [] }) {
   const base = normalizeBaseUrl(baseUrl);

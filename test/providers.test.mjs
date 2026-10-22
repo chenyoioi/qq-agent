@@ -17,7 +17,7 @@ fs.writeFileSync(path.join(DATA_DIR, 'config.json'), JSON.stringify({
   ]
 }));
 
-const { removeProvider, setProviderKey, currentProviders } = await import(path.join(ROOT, 'src/providers.js'));
+const { removeProvider, setProviderKey, currentProviders, updateProviderInfo } = await import(path.join(ROOT, 'src/providers.js'));
 const { getConfig } = await import(path.join(ROOT, 'src/config.js'));
 
 let pass = 0;
@@ -45,6 +45,23 @@ assert.equal(getConfig().api.model, 'm2');
 assert.equal(getConfig().api.baseUrl, 'https://b.example/v1');
 assert.equal(getConfig().api.apiKey, 'sk-b2');
 ok('删除当前提供商会自动切换到剩下的第一个');
+
+// ③.5 改 Base URL / 显示名：当前使用的提供商要同步 api.baseUrl
+{
+  const before = getConfig().api.baseUrl;
+  const upd = updateProviderInfo('p2', { baseURL: 'https://b2.example/v1', displayName: 'B2' });
+  assert.equal(upd.baseURL, 'https://b2.example/v1');
+  assert.equal(upd.displayName, 'B2');
+  assert.equal(getConfig().api.baseUrl, 'https://b2.example/v1', '当前提供商换地址后 api.baseUrl 同步');
+  assert.notEqual(getConfig().api.baseUrl, before);
+  ok('改地址会同步当前请求地址');
+  // 非当前提供商改地址不影响 api.baseUrl
+  const apiBefore = getConfig().api.baseUrl;
+  const other = updateProviderInfo('p3', { baseURL: 'https://c.example/v1' });
+  assert.equal(other, null, '不存在的提供商返回 null');
+  assert.equal(getConfig().api.baseUrl, apiBefore);
+  ok('改不存在的提供商返回 null 且不影响当前配置');
+}
 
 // ④ 不存在的 id
 assert.equal(removeProvider('nope'), null);

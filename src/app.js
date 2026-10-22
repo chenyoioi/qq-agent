@@ -21,7 +21,7 @@ import { SessionRegistry } from './sessions.js';
 import { Orchestrator } from './orchestrator.js';
 import { parseMasterCommand, matchExtensions, matchMuteCommand } from './master-command.js';
 import { listModels, estimateCost, chatCompletion } from './llm.js';
-import { importFromDsh, currentProviders, setProviderKey, removeProvider, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
+import { importFromDsh, currentProviders, setProviderKey, removeProvider, updateProviderInfo, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
 import { scanModelsVision, visionResults } from './vision-scan.js';
 import { ScheduleNotifyScheduler } from './schedule-notify.js';
 import { qrInfo, readQrBuffer } from './napcat-qr.js';
@@ -1190,6 +1190,20 @@ export function createApp({ log = console.log } = {}) {
           const p = removeModelFromProvider(String(body.providerId ?? ''), String(body.modelId ?? ''));
           if (!p) return json(res, 404, { ok: false, error: '提供商或模型不存在' });
           return json(res, 200, { ok: true, provider: p });
+        } catch (error) {
+          return json(res, 400, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+
+      // 改提供商的 Base URL / 显示名（中转站换域名）
+      if (pathname === '/api/providers/update' && method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        const pid = String(body.id ?? '');
+        if (!pid) return json(res, 400, { ok: false, error: '缺少 id' });
+        try {
+          const updated = updateProviderInfo(pid, { baseURL: body.baseURL, displayName: body.displayName });
+          if (!updated) return json(res, 404, { ok: false, error: '提供商不存在' });
+          return json(res, 200, { ok: true, provider: { id: updated.id, displayName: updated.displayName, baseURL: updated.baseURL } });
         } catch (error) {
           return json(res, 400, { ok: false, error: String(error?.message ?? error) });
         }

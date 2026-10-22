@@ -1021,3 +1021,32 @@ body.skill-drawer-open { overflow: hidden; }   /* 抽屉打开时锁背景滚动
 .provider-badge.warn { color: var(--warn-text); border-color: var(--warn-line); background: var(--warn-soft); }
 .provider-row.active .provider-badge:first-of-type { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
 .provider-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ── 模型 API 板块重排：当前状态卡 + 提供商列表 + 折叠区 ── */
+.api-current {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px 16px; border: 1px solid var(--border-soft); border-radius: 10px;
+  background: var(--surface-sunken); margin-bottom: 6px;
+}
+.api-current.warn { border-color: var(--warn-line); background: var(--warn-soft); }
+.api-current-main { min-width: 0; }
+.api-current-model { font-size: 17px; font-weight: 650; margin-bottom: 4px; }
+.api-current-meta { font-size: 12.5px; word-break: break-all; }
+.api-current-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.api-current-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+
+.api-fold {
+  margin-top: 14px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-sunken);
+}
+.api-fold > summary {
+  cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 13px; user-select: none;
+  list-style: none;
+}
+.api-fold > summary::-webkit-details-marker { display: none; }
+.api-fold > summary::before { content: '▸ '; color: var(--muted-text); }
+.api-fold[open] > summary::before { content: '▾ '; }
+.api-fold-body { padding: 4px 14px 14px; }
+
+.provider-test-line { font-size: 12px; margin-top: 4px; min-height: 0; }
+.provider-test-line.ok-text { color: var(--green); }
+.provider-test-line.warn-text { color: var(--red); }
