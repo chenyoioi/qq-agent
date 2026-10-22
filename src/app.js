@@ -1102,8 +1102,17 @@ export function createApp({ log = console.log } = {}) {
         try {
           const body = await readBody(req);
           const cfgNow = getConfig();
-          const baseUrl = String(body.baseUrl || cfgNow.api.baseUrl || '');
-          const apiKey = body.apiKey !== undefined ? String(body.apiKey ?? '') : String(cfgNow.api.apiKey || '');
+          // 支持按 providerId 拉取：用该提供商存着的地址和 Key（界面上"管理模型"就是这么用的）
+          let baseUrl = String(body.baseUrl || '');
+          let apiKey = body.apiKey !== undefined ? String(body.apiKey ?? '') : '';
+          if (body.providerId) {
+            const prov = currentProviders().find((x) => x.id === String(body.providerId));
+            if (!prov) return json(res, 404, { ok: false, error: '提供商不存在' });
+            baseUrl = baseUrl || prov.baseURL || '';
+            if (body.apiKey === undefined) apiKey = prov.apiKey || '';
+          }
+          if (!baseUrl) baseUrl = String(cfgNow.api.baseUrl || '');
+          if (!apiKey && body.apiKey === undefined) apiKey = String(cfgNow.api.apiKey || '');
           const models = await fetchModelsFrom(baseUrl, apiKey);
           return json(res, 200, { ok: true, models });
         } catch (error) {

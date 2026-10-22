@@ -67,6 +67,22 @@ ok('删除当前提供商会自动切换到剩下的第一个');
 assert.equal(removeProvider('nope'), null);
 ok('删除不存在的提供商返回 null');
 
+// ④.5 删掉"正在用"的模型：自动落到该提供商的下一个模型（否则下次运行报模型不存在）
+{
+  const { removeModelFromProvider } = await import(path.join(ROOT, 'src/providers.js'));
+  assert.equal(getConfig().api.model, 'm2');
+  const r = removeModelFromProvider('p2', 'm2');
+  assert.equal(r.fallbackModel, 'm3', '删掉当前模型后回落到第一个剩余模型');
+  assert.equal(getConfig().api.model, 'm3');
+  assert.equal(currentProviders().find((p) => p.id === 'p2').models.includes('m2'), false);
+  ok('删掉正在使用的模型会自动落到下一个');
+  // 删非当前模型：不动 api.model
+  const before = getConfig().api.model;
+  removeModelFromProvider('p2', 'nope');
+  assert.equal(getConfig().api.model, before);
+  ok('删不存在的模型不影响当前模型');
+}
+
 // ⑤ 删掉最后一个：清空 api 指向，不残留失效的 provider id
 const last = removeProvider('p2');
 assert.equal(last.wasActive, true);

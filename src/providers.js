@@ -346,8 +346,17 @@ export function removeModelFromProvider(providerId, modelId) {
     p.modelNames = { ...p.modelNames };
     delete p.modelNames[modelId];
   }
-  updateConfig({ providers });
-  return p;
+  const patch = { providers };
+  // 删掉的正好是"正在用"的模型：立刻换到这个提供商的第一个模型，
+  // 否则 api.model 指向一个已经不存在的模型，下一次运行就报错。
+  const api = getConfig().api || {};
+  let fallbackModel = null;
+  if (String(api.provider || '') === String(providerId) && String(api.model || '') === String(modelId)) {
+    fallbackModel = p.models[0] || '';
+    patch.api = { model: fallbackModel };
+  }
+  updateConfig(patch);
+  return { ...p, fallbackModel };
 }
 
 // ── 连通性测试：GET {baseURL}/models（OpenAI 兼容探测） ────────────────────

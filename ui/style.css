@@ -1050,3 +1050,25 @@ body.skill-drawer-open { overflow: hidden; }   /* 抽屉打开时锁背景滚动
 .provider-test-line { font-size: 12px; margin-top: 4px; min-height: 0; }
 .provider-test-line.ok-text { color: var(--green); }
 .provider-test-line.warn-text { color: var(--red); }
+
+/* 提供商 → 模型管理弹窗 */
+.pm-head { margin-bottom: 10px; }
+.pm-head-name { font-weight: 650; font-size: 14px; }
+.pm-head-url { font-size: 12px; word-break: break-all; }
+.pm-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.pm-section-title { font-size: 12px; color: var(--muted-text); margin: 6px 0; }
+.pm-models { display: flex; flex-direction: column; gap: 6px; }
+.pm-model {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--surface-sunken);
+}
+.pm-model.active { border-color: var(--accent); }
+.pm-model-main { min-width: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pm-model-name { font-size: 13px; font-weight: 550; }
+.pm-model-id { font-size: 11.5px; width: 100%; word-break: break-all; }
+.pm-remote { margin-top: 14px; border-top: 1px solid var(--border-soft); padding-top: 10px; }
+.pm-remote-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted-text); margin-bottom: 6px; }
+.pm-remote-list { max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.pm-remote-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 3px 2px; }
+.pm-remote-item.have { opacity: 0.55; }
+.pm-remote-item .muted { font-size: 11px; }

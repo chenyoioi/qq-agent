@@ -2654,6 +2654,7 @@ function providerRowHtml(p, c) {
       <div class="provider-test-line muted" data-test-line="${esc(p.id)}"></div>
     </div>
     <div class="provider-actions">
+      <button class="btn btn-small" data-act="provider-models" data-pid="${esc(p.id)}">模型</button>
       <button class="btn btn-small" data-act="provider-set-key" data-pid="${esc(p.id)}">改 Key</button>
       <button class="btn btn-small" data-act="provider-edit-url" data-pid="${esc(p.id)}">改地址</button>
       <button class="btn btn-small" data-act="provider-test" data-pid="${esc(p.id)}">测试</button>
@@ -2742,8 +2743,7 @@ function renderApiSection(c) {
         <div class="checkbox-row"><input type="checkbox" id="cfg-vision" ${c.api.vision !== false ? 'checked' : ''} />
           <label for="cfg-vision">图片输入（关闭则移除看图工具，模型只看到 [图片] 占位符）</label>
           <span id="vision-switch-hint" class="muted" style="font-size:12px;align-self:center"></span></div>
-        <div class="field" style="margin-top:8px"><label>删除模型</label>
-          <div><button class="btn btn-danger btn-small" id="delete-model-btn">删除模型…</button></div></div>
+
       </div>
     </details>`;
 }
@@ -3240,6 +3240,7 @@ function bindSettingsEvents(c) {
     const pid = btn.dataset.pid;
     const prov = (state.providers || []).find((x) => x.id === pid);
     if (!prov) return;
+    if (btn.dataset.act === 'provider-models') { openProviderModelsModal(prov.id); return; }
     if (btn.dataset.act === 'provider-set-key') { openProviderKeyModal(prov); return; }
     if (btn.dataset.act === 'provider-edit-url') { openProviderUrlModal(prov); return; }
     if (btn.dataset.act === 'provider-test') {
@@ -3563,6 +3564,196 @@ function openProviderKeyModal(prov) {
       hint.textContent = '保存失败：' + e.message;
     }
   });
+}
+
+/** 重新拉一次提供商目录到前端状态（模型增删后刷新用）。 */
+async function refreshProviders() {
+  try {
+    const d = await api('/api/providers');
+    state.providers = d.providers || [];
+  } catch { /* 拉不到就沿用旧状态 */ }
+}
+
+/**
+ * 某个提供商的模型管理：看列表、从服务商拉取、手动添加、删除、设为当前。
+ * 以前"获取列表"只在添加提供商表单里，删除模型是另一个全局弹窗 —— 想给已有的
+ * 提供商加个模型，得把地址和 Key 再填一遍。现在收敛到这一处。
+ */
+function openProviderModelsModal(providerId) {
+  let remote = null;      // 拉取到的模型 id 列表
+  let busy = false;
+  // 状态文字要跨重渲染保留：每次操作后 render() 会重建 DOM，不存下来就一闪而空
+  let statusText = '';
+  let statusCls = 'muted';
+  const overlay = modelModalShell({
+    head: '管理模型',
+    body: `<div id="pm-body"><div class="muted" style="padding:10px">加载中…</div></div>`,
+    foot: `<button class="btn" id="pm-close">关闭</button>`
+  });
+  const body = overlay.querySelector('#pm-body');
+  const prov = () => (state.providers || []).find((x) => x.id === providerId) || null;
+
+  function modelRowsHtml(p) {
+    const names = p.modelNames || {};
+    const models = Array.isArray(p.models) ? p.models : [];
+    const isCurrentProv = state.config?.api?.provider === p.id;
+    if (!models.length) return '<div class="muted" style="padding:8px 2px">还没有模型：点上面的「从服务商拉取」或「手动添加」。</div>';
+    return models.map((m) => {
+      const active = isCurrentProv && state.config?.api?.model === m;
+      return `<div class="pm-model ${active ? 'active' : ''}">
+        <div class="pm-model-main">
+          <span class="pm-model-name">${esc(names[m] || m)}</span>
+          ${active ? '<span class="provider-badge">当前使用</span>' : ''}
+          <div class="pm-model-id muted">${esc(m)}</div>
+        </div>
+        <div class="provider-actions">
+          ${active ? '' : `<button class="btn btn-small" data-pm="use" data-model="${esc(m)}">设为当前</button>`}
+          <button class="btn btn-small btn-danger" data-pm="del" data-model="${esc(m)}">删除</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function remoteHtml(p) {
+    if (!remote) return '';
+    const have = new Set(p.models || []);
+    if (!remote.length) return '<div class="muted" style="padding:8px 2px">服务商没有返回任何模型。</div>';
+    return `<div class="pm-remote">
+      <div class="pm-remote-head">
+        <span>服务商有 ${remote.length} 个模型（已添加的不可重复勾选）</span>
+        <button class="btn btn-small btn-primary" id="pm-add-picked">加入选中</button>
+      </div>
+      <div class="pm-remote-list">
+        ${remote.map((m) => `<label class="pm-remote-item ${have.has(m) ? 'have' : ''}">
+          <input type="checkbox" value="${esc(m)}" ${have.has(m) ? 'disabled' : ''} />
+          <span>${esc(m)}</span>
+          ${have.has(m) ? '<span class="muted">已在目录</span>' : ''}
+        </label>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  function render() {
+    const p = prov();
+    if (!p) { body.innerHTML = '<div class="muted" style="padding:10px">该提供商已不存在。</div>'; return; }
+    body.innerHTML = `
+      <div class="pm-head">
+        <div class="pm-head-name">${esc(p.displayName || p.id)}</div>
+        <div class="pm-head-url muted">${esc(p.baseURL || '')}${p.hasKey ? '' : ' · <span class="warn-text">未配置 Key，拉取会失败</span>'}</div>
+      </div>
+      <div class="pm-toolbar">
+        <button class="btn btn-small" id="pm-fetch">从服务商拉取模型</button>
+        <button class="btn btn-small" id="pm-manual">手动添加</button>
+        <span class="${statusCls}" id="pm-status">${esc(statusText)}</span>
+      </div>
+      <div id="pm-manual-box" style="display:none">
+        <div class="field-row">
+          <div class="field"><label>模型 ID</label><input type="text" id="pm-manual-id" placeholder="例如 gpt-4o-mini" /></div>
+          <div class="field"><label>显示名（可空）</label><input type="text" id="pm-manual-name" placeholder="随便起个名" /></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btn-small btn-primary" id="pm-manual-save">加入</button>
+          <button class="btn btn-small" id="pm-manual-cancel">取消</button>
+        </div>
+      </div>
+      <div class="pm-section-title">目录里的模型（${(p.models || []).length}）</div>
+      <div class="pm-models">${modelRowsHtml(p)}</div>
+      ${remoteHtml(p)}`;
+    bind();
+  }
+
+  function setStatus(text, cls = 'muted') {
+    statusText = String(text || '');
+    statusCls = cls;
+    const el = body.querySelector('#pm-status');
+    if (el) { el.textContent = statusText; el.className = cls; }
+  }
+
+  function bind() {
+    const p = prov();
+    body.querySelector('#pm-close')?.addEventListener('click', () => closeModelModal(overlay));
+    body.querySelector('#pm-fetch')?.addEventListener('click', async (ev) => {
+      if (busy) return;
+      busy = true;
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      setStatus('拉取中…');
+      try {
+        const r = await api('/api/providers/fetch-models', { method: 'POST', body: JSON.stringify({ providerId: p.id }) });
+        remote = r.models || [];
+        setStatus(`拉到 ${remote.length} 个模型`, 'muted');
+      } catch (e) {
+        setStatus(`拉取失败：${e.message}`, 'warn-text');
+      }
+      busy = false;
+      btn.disabled = false;
+      render();
+    });
+    body.querySelector('#pm-manual')?.addEventListener('click', () => {
+      const box = body.querySelector('#pm-manual-box');
+      if (box) box.style.display = box.style.display === 'none' ? '' : 'none';
+      body.querySelector('#pm-manual-id')?.focus();
+    });
+    body.querySelector('#pm-manual-cancel')?.addEventListener('click', () => {
+      const box = body.querySelector('#pm-manual-box');
+      if (box) box.style.display = 'none';
+    });
+    body.querySelector('#pm-manual-save')?.addEventListener('click', async () => {
+      const id = String(body.querySelector('#pm-manual-id')?.value || '').trim();
+      const name = String(body.querySelector('#pm-manual-name')?.value || '').trim();
+      if (!id) { setStatus('模型 ID 不能为空', 'warn-text'); return; }
+      await addModels(p, [{ id, name: name || id }]);
+    });
+    body.querySelector('#pm-add-picked')?.addEventListener('click', async () => {
+      const picked = [...body.querySelectorAll('.pm-remote-item input:checked')].map((el) => el.value);
+      if (!picked.length) { setStatus('先勾选要加入的模型', 'warn-text'); return; }
+      await addModels(p, picked.map((m) => ({ id: m, name: m })));
+      remote = remote.filter((m) => !picked.includes(m));
+    });
+    body.querySelectorAll('[data-pm]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const model = btn.dataset.model;
+        if (btn.dataset.pm === 'use') {
+          try {
+            await api('/api/config', {
+              method: 'POST',
+              body: JSON.stringify({ api: { provider: p.id, model, baseUrl: p.baseURL || '', apiKey: p.apiKey || '' } })
+            });
+            await refreshProviders();
+            await loadSettings();
+            setStatus(`已切换到 ${model}`, 'ok-text');
+          } catch (e) { setStatus(`切换失败：${e.message}`, 'warn-text'); }
+          render();
+          return;
+        }
+        if (btn.dataset.pm === 'del') {
+          if (!confirm(`从「${p.displayName || p.id}」删除模型 ${model}？`)) return;
+          try {
+            await api('/api/providers/models', { method: 'DELETE', body: JSON.stringify({ providerId: p.id, modelId: model }) });
+            await refreshProviders();
+            await loadSettings();
+            setStatus(`已删除 ${model}`, 'muted');
+          } catch (e) { setStatus(`删除失败：${e.message}`, 'warn-text'); }
+          render();
+        }
+      });
+    });
+  }
+
+  async function addModels(p, models) {
+    try {
+      await api('/api/providers/models', { method: 'POST', body: JSON.stringify({ providerId: p.id, models }) });
+      await refreshProviders();
+      await loadSettings();
+      setStatus(`已加入 ${models.length} 个模型`, 'ok-text');
+    } catch (e) {
+      setStatus(`加入失败：${e.message}`, 'warn-text');
+    }
+    render();
+  }
+
+  overlay.querySelector('#pm-close')?.addEventListener('click', () => closeModelModal(overlay));
+  render();
 }
 
 /** 改提供商的 Base URL / 显示名（中转站换域名，不用删了重加）。 */
