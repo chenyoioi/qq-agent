@@ -2690,6 +2690,27 @@ function renderApiSection(c) {
 
     <div class="settings-divider"></div>
 
+    <h3>已添加的提供商</h3>
+    <div class="hint" style="margin-bottom:8px">当前使用的那个不能直接删掉就完事：删除时如果它是当前使用的，会自动切到剩下的第一个提供商。</div>
+    <div id="provider-list" class="provider-list">
+      ${(state.providers || []).length ? (state.providers || []).map((p) => {
+        const active = p.id === c.api.provider;
+        const models = Array.isArray(p.models) ? p.models : [];
+        return `<div class="provider-row ${active ? 'active' : ''}" data-pid="${esc(p.id)}">
+          <div class="provider-main">
+            <span class="provider-name">${esc(p.displayName || p.id)}</span>
+            ${active ? '<span class="provider-badge">当前使用</span>' : ''}
+            ${p.hasKey ? '<span class="provider-badge ok">有 Key</span>' : '<span class="provider-badge warn">无 Key</span>'}
+            <div class="provider-meta muted">${esc(p.baseURL || '')} · ${models.length} 个模型</div>
+          </div>
+          <div class="provider-actions">
+            <button class="btn btn-small" data-act="provider-set-key" data-pid="${esc(p.id)}">改 Key</button>
+            <button class="btn btn-small btn-danger" data-act="provider-delete" data-pid="${esc(p.id)}">删除</button>
+          </div>
+        </div>`;
+      }).join('') : '<div class="hint">还没有提供商：用下面的「手动添加提供商」添加一个。</div>'}
+    </div>
+
     <h3>手动添加提供商</h3>
     <div class="field"><label>Base URL（可填写）</label>
       <div style="display:flex;gap:8px">
@@ -3171,6 +3192,29 @@ function bindSettingsEvents(c) {
   const deleteModelBtn = $('#delete-model-btn');
   if (deleteModelBtn) deleteModelBtn.addEventListener('click', () => openModelDeleteModal());
 
+  const providerList = $('#provider-list');
+  if (providerList) providerList.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-act]');
+    if (!btn) return;
+    const pid = btn.dataset.pid;
+    const prov = (state.providers || []).find((x) => x.id === pid);
+    if (!prov) return;
+    if (btn.dataset.act === 'provider-set-key') { openProviderKeyModal(prov); return; }
+    if (btn.dataset.act === 'provider-delete') {
+      const active = state.config?.api?.provider === pid;
+      if (!confirm(`删除提供商「${prov.displayName || prov.id}」？\n\n${active ? '它正在被使用：删除后会自动切到剩下的第一个提供商。' : '它下面的模型会一起从目录里移除（不影响已保存的配置项）。'}`)) return;
+      try {
+        btn.disabled = true;
+        const r = await api(`/api/providers?id=${encodeURIComponent(pid)}`, { method: 'DELETE' });
+        await loadSettings();
+        showToast(r.switchedTo ? `已删除；当前切到 ${r.switchedTo.displayName}` : '已删除', 'info');
+      } catch (e) {
+        btn.disabled = false;
+        alert('删除失败：' + e.message);
+      }
+    }
+  });
+
   // 图片输入开关联动（视觉扫描结果）
   function syncVisionSwitch(pid, model) {
     const box = $('#cfg-vision');
@@ -3428,6 +3472,38 @@ function openPersonaCreateModal() {
       await loadSettings();
     } catch (e) {
       $('#persona-pick-hint').textContent = `添加失败：${e.message}`;
+    }
+  });
+}
+
+/** 改某个提供商的 API Key（不用删了重加 —— 这也是之前"改不了 Key"的原因）。 */
+function openProviderKeyModal(prov) {
+  const overlay = modelModalShell({
+    head: `修改 API Key · ${esc(prov.displayName || prov.id)}`,
+    body: `
+      <div class="field"><label>Base URL</label>
+        <input type="text" value="${esc(prov.baseURL || '')}" readonly /></div>
+      <div class="field"><label>新的 API Key</label>
+        <input type="text" id="prov-key-input" placeholder="sk-..." autocomplete="off" />
+        <div class="hint">当前${prov.hasKey ? '已保存一个 Key（不回显）' : '还没有 Key'}；保存后会同时更新"当前 API Key"，改完立即生效。</div></div>
+      <div class="hint" id="prov-key-result"></div>`,
+    foot: `<button class="btn" id="prov-key-cancel">取消</button>
+           <button class="btn btn-primary" id="prov-key-save">保存</button>`
+  });
+  const input = overlay.querySelector('#prov-key-input');
+  const hint = overlay.querySelector('#prov-key-result');
+  input?.focus();
+  overlay.querySelector('#prov-key-cancel')?.addEventListener('click', () => closeModelModal(overlay));
+  overlay.querySelector('#prov-key-save')?.addEventListener('click', async () => {
+    const key = String(input?.value || '').trim();
+    if (!key) { hint.textContent = 'Key 不能为空'; return; }
+    try {
+      await api('/api/providers/set-key', { method: 'POST', body: JSON.stringify({ providerId: prov.id, apiKey: key }) });
+      closeModelModal(overlay);
+      await loadSettings();
+      showToast('API Key 已更新', 'ok');
+    } catch (e) {
+      hint.textContent = '保存失败：' + e.message;
     }
   });
 }

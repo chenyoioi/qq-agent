@@ -114,10 +114,51 @@ export function currentProviders() {
 
 /** 给指定提供商设置 API Key（存进配置）。 */
 export function setProviderKey(providerId, apiKey) {
+  const key = String(apiKey || '').trim();
   const providers = currentProviders().map((p) =>
-    p.id === providerId ? { ...p, apiKey: String(apiKey || '').trim(), apiKeyFrom: 'manual' } : p);
+    p.id === providerId ? { ...p, apiKey: key, apiKeyFrom: 'manual' } : p);
   updateConfig({ providers });
+  // 改的正好是"当前使用"的提供商时，同步 api.apiKey ——
+  // 否则真正的请求（llm.js 读 cfg.api.apiKey）还在用旧 Key，改了等于没改。
+  const api = getConfig().api || {};
+  if (String(api.provider || '') === String(providerId)) {
+    updateConfig({ api: { apiKey: key } });
+  }
   return providers.find((p) => p.id === providerId) || null;
+}
+
+/**
+ * 删除提供商。
+ *
+ * 之前没有删除入口：想换 API Key 只能删掉重加，而删又删不掉 → 卡死。
+ *
+ * 删的正好是"当前使用"时自动切到剩下的第一个（连 model/baseUrl/apiKey 一起换），
+ * 否则 api 配置会指向一个已不存在的提供商。
+ *
+ * @returns {{removed:object, wasActive:boolean, switchedTo:object|null}|null}
+ */
+export function removeProvider(providerId) {
+  const id = String(providerId || '');
+  const providers = currentProviders();
+  const target = providers.find((p) => p.id === id);
+  if (!target) return null;
+  const rest = providers.filter((p) => p.id !== id);
+  const api = getConfig().api || {};
+  const wasActive = String(api.provider || '') === id;
+  const patch = { providers: rest };
+  let switchedTo = null;
+  if (wasActive) {
+    const next = rest[0] || null;
+    if (next) {
+      const model = (next.models || [])[0] || '';
+      patch.api = { provider: next.id, model, baseUrl: next.baseURL || '', apiKey: next.apiKey || '' };
+      switchedTo = next;
+    } else {
+      patch.api = { provider: '', model: '', baseUrl: '', apiKey: '' };
+    }
+  }
+  updateConfig(patch);
+  return { removed: target, wasActive, switchedTo };
 }
 
 // ── 手动管理提供商/模型（设置页“模型 API”） ──────────────────────────────

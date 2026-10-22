@@ -21,7 +21,7 @@ import { SessionRegistry } from './sessions.js';
 import { Orchestrator } from './orchestrator.js';
 import { parseMasterCommand, matchExtensions, matchMuteCommand } from './master-command.js';
 import { listModels, estimateCost, chatCompletion } from './llm.js';
-import { importFromDsh, currentProviders, setProviderKey, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
+import { importFromDsh, currentProviders, setProviderKey, removeProvider, testAllProviders, testOneProvider, testModelChat, fetchModelsFrom, upsertProvider, addModelsToProvider, removeModelFromProvider } from './providers.js';
 import { scanModelsVision, visionResults } from './vision-scan.js';
 import { ScheduleNotifyScheduler } from './schedule-notify.js';
 import { qrInfo, readQrBuffer } from './napcat-qr.js';
@@ -1157,6 +1157,21 @@ export function createApp({ log = console.log } = {}) {
       }
 
       // 给已有提供商追加模型
+      // 删除提供商：?id=xxx。删的是当前使用的那个时，自动切到剩下的第一个
+      if (pathname === '/api/providers' && method === 'DELETE') {
+        const pid = String(new URL(req.url, 'http://127.0.0.1').searchParams.get('id') || '');
+        if (!pid) return json(res, 400, { ok: false, error: '缺少 id' });
+        const r = removeProvider(pid);
+        if (!r) return json(res, 404, { ok: false, error: '提供商不存在' });
+        log(`[providers] 已删除提供商 ${r.removed.displayName || pid}${r.wasActive ? `（当前使用中，已切到 ${r.switchedTo?.displayName || '无'}）` : ''}`);
+        return json(res, 200, {
+          ok: true,
+          removedId: pid,
+          wasActive: r.wasActive,
+          switchedTo: r.switchedTo ? { id: r.switchedTo.id, displayName: r.switchedTo.displayName, model: (r.switchedTo.models || [])[0] || '' } : null
+        });
+      }
+
       if (pathname === '/api/providers/models' && method === 'POST') {
         try {
           const body = await readBody(req);
