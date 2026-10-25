@@ -183,6 +183,31 @@ function pass(name, extra = '') {
 async function main() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-agent-test-'));
   process.env.QQ_AGENT_DATA_DIR = dataDir;
+  // 端到端审计要的是"核心行为可复现"。仓库里装着的扩展有些是**随机/后台**性质的
+  // （贴表情回应 20% 概率、戳一戳概率回应、刷视频定时器…），会让"自回显不触发新会话"
+  // 这类断言偶发多出一次 LLM 请求（实测 20 !== 19）。这里预先关掉它们。
+  // 直接列出仓库里所有扩展并全部关掉：插件在 setup 阶段就按开关决定要不要注册钩子/定时器，
+  // 只有"加载前"就写好配置才彻底安静（逐个点名容易漏掉新装的插件）。
+  const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const allSkillIds = [];
+  for (const dir of ['plugins', 'skills']) {
+    const base = path.join(appRoot, dir);
+    if (!fs.existsSync(base)) continue;
+    for (const name of fs.readdirSync(base, { withFileTypes: true })) {
+      if (!name.isDirectory()) continue;
+      const manifestPath = path.join(base, name.name, 'plugin.json');
+      const skillPath = path.join(base, name.name, 'skill.json');
+      let id = name.name;
+      try {
+        const mf = fs.existsSync(manifestPath) ? manifestPath : (fs.existsSync(skillPath) ? skillPath : '');
+        if (mf) id = JSON.parse(fs.readFileSync(mf, 'utf8')).id || id;
+      } catch { /* 用目录名兜底 */ }
+      allSkillIds.push(id);
+    }
+  }
+  const skillsOff = {};
+  for (const id of allSkillIds) skillsOff[id] = { enabled: false };
+  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ skills: skillsOff }, null, 2));
 
   const onebotHttp = createMockOneBotHttp();
   PORTS.onebotHttp = await listen(onebotHttp.server);
