@@ -1,3 +1,4 @@
+// 群红包（合并进经济系统后的模块）
 // 群红包（依赖货币能力 currency.v1，用 transfer 结算）
 //
 // 为什么不用 reserve 预扣：
@@ -17,13 +18,14 @@ const num = (v, fb, min, max) => {
 
 let hostApi = null;
 let storage = null;
+const K = (k) => `rp:${k}`;
 
 function readSettings() {
   const c = (() => { try { return hostApi?.config?.() ?? {}; } catch { return {}; } })();
   return {
-    maxTotal: num(c.maxTotal, DEFAULTS.maxTotal, 1, 1e6),
-    maxCount: num(c.maxCount, DEFAULTS.maxCount, 1, 100),
-    expireSec: num(c.expireSec, DEFAULTS.expireSec, 10, 86400)
+    maxTotal: num(c.rpMaxTotal ?? c.maxTotal, DEFAULTS.maxTotal, 1, 1e6),
+    maxCount: num(c.rpMaxCount ?? c.maxCount, DEFAULTS.maxCount, 1, 100),
+    expireSec: num(c.rpExpireSec ?? c.expireSec, DEFAULTS.expireSec, 10, 86400)
   };
 }
 
@@ -32,8 +34,8 @@ function money() {
   return api && api.apiVersion === 1 ? api : null;
 }
 
-const listKey = (scope) => `packets:${scope}`;
-const packetKey = (id) => `packet:${id}`;
+const listKey = (scope) => K(`packets:${scope}`);
+const packetKey = (id) => K(`packet:${id}`);
 
 function loadPackets(scope) {
   const arr = storage?.get(listKey(scope), []);
@@ -68,7 +70,7 @@ function summarize(packet) {
   };
 }
 
-export function setup(api) {
+export function register(api) {
   hostApi = api;
   storage = api.storage;
 
@@ -237,7 +239,7 @@ export function setup(api) {
 }
 
 /** 面板只读视图：本群红包列表。 */
-export async function handleUiRequest({ action, payload } = {}) {
+export async function ui({ action, payload } = {}) {
   if (action !== 'list') return { ok: false, error: `未知动作：${action}` };
   const scope = String(payload?.chatKey || '');
   if (!/^group:\d+$/.test(scope)) return { ok: false, error: '需要 chatKey（group:123456）' };

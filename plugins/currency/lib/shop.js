@@ -1,3 +1,4 @@
+// 金币商店（合并进经济系统后的模块）
 // 金币商店（消费 currency.v1）
 //
 // 三件事：
@@ -10,9 +11,9 @@
 import { randomInt } from 'node:crypto';
 
 const DEFAULTS = { maxStock: 9999, allowNegativeStock: false, deliverNotice: '兑换成功，凭这条记录找管理员领取' };
-const ITEMS_KEY = 'items';
-const ORDERS_KEY = 'orders';
-const SEQ_KEY = 'seq';
+const ITEMS_KEY = 'shop:items';
+const ORDERS_KEY = 'shop:orders';
+const SEQ_KEY = 'shop:seq';
 
 const num = (v, fb, min, max) => {
   const n = Math.floor(Number(v ?? fb));
@@ -33,9 +34,9 @@ let storage = null;
 function readSettings() {
   const c = (() => { try { return hostApi?.config?.() ?? {}; } catch { return {}; } })();
   return {
-    maxStock: num(c.maxStock, DEFAULTS.maxStock, 0, 1e9),
-    allowNegativeStock: c.allowNegativeStock === true,
-    deliverNotice: String(c.deliverNotice || DEFAULTS.deliverNotice).slice(0, 200)
+    maxStock: num(c.shopMaxStock ?? c.maxStock, DEFAULTS.maxStock, 0, 1e9),
+    allowNegativeStock: (c.shopAllowNegativeStock ?? c.allowNegativeStock) === true,
+    deliverNotice: String(c.shopDeliverNotice || c.deliverNotice || DEFAULTS.deliverNotice).slice(0, 200)
   };
 }
 
@@ -102,7 +103,7 @@ function findItem(items, key) {
   return loose.length === 1 ? loose[0] : null;
 }
 
-export function setup(api) {
+export function register(api) {
   hostApi = api;
   storage = api.storage;
 
@@ -204,7 +205,7 @@ export function setup(api) {
         const orders = loadOrders();
         orders.push(order);
         saveOrders(orders);
-        const bagKey = `bag:${scope}:${userId}`;
+        const bagKey = `shop:bag:${scope}:${userId}`;
         const bag = storage?.get(bagKey, []);
         const list = Array.isArray(bag) ? bag : [];
         list.push({ itemId: item.id, name: item.name, count, orderId, at: order.createdAt });
@@ -256,7 +257,7 @@ export function setup(api) {
       const scope = String(ctx?.chatKey || '');
       const userId = String(ctx?.sender?.userId || ctx?.senderId || '').trim();
       const orders = loadOrders().filter((o) => o.scope === scope && o.userId === userId).slice(-20).reverse();
-      const bag = storage?.get(`bag:${scope}:${userId}`, []);
+      const bag = storage?.get(`shop:bag:${scope}:${userId}`, []);
       return {
         content: JSON.stringify({
           ok: true,
@@ -270,7 +271,7 @@ export function setup(api) {
 }
 
 /** 控制台面板：读写商品、看订单、主人手动发币/扣币/转账。 */
-export async function handleUiRequest({ action, payload } = {}) {
+export async function ui({ action, payload } = {}) {
   const currency = money();
   const p = payload && typeof payload === 'object' ? payload : {};
 

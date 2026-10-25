@@ -1,5 +1,26 @@
 # 更新日志
 
+## 1.1.40（2026-10-25）
+
+### 经济三件套并进货币插件：一个「经济系统」管完
+
+以前是 4 个插件（货币 / 签到 / 红包 / 商店）各一张卡、各一份设置、各一个面板，改点东西要在
+技能页里翻来翻去。现在合成**一个插件 `currency`（显示名「经济系统」）**：
+
+- 代码上：签到 / 红包 / 商店成为 `plugins/currency/lib/{checkin,red-packet,shop}.js`，
+  和货币共用同一个 `api.storage`（键前缀 `chk:` / `rp:` / `shop:` 防撞）、同一份账本；
+- 工具全部挂在同一个插件下：`balance / history / rank / transfer / admin_adjust / holds /
+  admin_release / checkin / send_red_packet / grab_red_packet / shop_list / shop_buy / shop_my`（13 个）；
+- **设置页合成一张卡**，按组折叠：货币 / 每日签到 / 群红包 / 金币商店（17 项设置）；
+- **一个面板**「经济系统」，内部四个页签：商店（改商品/看订单）· 签到榜 · 红包 · 发币/转账/财富榜；
+- 货币能力 `currency.v1` 对外接口一字未改，其他扩展照旧接入；
+- 迁移：`data/currency.json`（余额/流水）不动；旧的 `skill-storage/{checkin,shop,red-packet}.json`
+  里的数据搬到 `currency` 的存储并按前缀改名（一次性脚本，旧文件备份在 `plugins-archive/`）；
+  三个旧插件目录移到 `plugins-archive/`（不再加载，加进 .gitignore）。
+
+测试相应改成只加载一个插件（14 项仍全绿）；浏览器实测：控制台只剩一个「经济系统」页签，
+四个内部页签都能打开，商品 4 行正常编辑。
+
 ## 1.1.39（2026-10-25）
 
 ### 经济三件套：每日签到 / 群红包 / 金币商店（带可编辑面板）

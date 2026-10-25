@@ -1,3 +1,4 @@
+// 每日签到（合并进经济系统后的模块）
 // 每日签到（LLM 型工具 + 货币能力消费方）
 //
 // 设计要点（都是踩过的坑）：
@@ -6,7 +7,6 @@
 //   · 日期用本地时区的"业务日"（resetHour 之前算前一天），不用 Date.now() 毫秒。
 //   · 连签天数只以本地存储为准；金币本身存在货币插件里，这里不重复记账。
 //   · 货币不可用（插件被停用/没授权）时如实返回错误，不要让模型假装签到成功。
-import { getConfig } from '../../src/config.js';
 
 const DEFAULTS = {
   baseReward: 20,
@@ -43,15 +43,16 @@ let hostApi = null;
 let storage = null;
 // 内存里的"今天谁签过"缓存，避免每次都读盘；进程重启后由 storage 兜底
 const memory = new Map();
+const K = (k) => `chk:${k}`;
 
 function readSettings() {
   const c = (() => { try { return hostApi?.config?.() ?? {}; } catch { return {}; } })();
   return {
-    baseReward: num(c.baseReward, DEFAULTS.baseReward, 1, 100000),
-    streakBonus: num(c.streakBonus, DEFAULTS.streakBonus, 0, 10000),
-    maxBonus: num(c.maxBonus, DEFAULTS.maxBonus, 0, 100000),
-    resetHour: num(c.resetHour, DEFAULTS.resetHour, 0, 23),
-    announceRank: c.announceRank !== false
+    baseReward: num(c.checkinBaseReward ?? c.baseReward, DEFAULTS.baseReward, 1, 100000),
+    streakBonus: num(c.checkinStreakBonus ?? c.streakBonus, DEFAULTS.streakBonus, 0, 10000),
+    maxBonus: num(c.checkinMaxBonus ?? c.maxBonus, DEFAULTS.maxBonus, 0, 100000),
+    resetHour: num(c.checkinResetHour ?? c.resetHour, DEFAULTS.resetHour, 0, 23),
+    announceRank: (c.checkinAnnounceRank ?? c.announceRank) !== false
   };
 }
 
@@ -61,7 +62,7 @@ function money() {
 }
 
 function loadUser(scope, userId) {
-  const key = `user:${scope}:${userId}`;
+  const key = K(`user:${scope}:${userId}`);
   if (memory.has(key)) return memory.get(key);
   const saved = storage?.get(key, null);
   const value = saved && typeof saved === 'object'
@@ -72,12 +73,12 @@ function loadUser(scope, userId) {
 }
 
 function saveUser(scope, userId, value) {
-  const key = `user:${scope}:${userId}`;
+  const key = K(`user:${scope}:${userId}`);
   memory.set(key, value);
   storage?.set(key, value);
 }
 
-export function setup(api) {
+export function register(api) {
   hostApi = api;
   storage = api.storage;
 
@@ -158,16 +159,16 @@ export function setup(api) {
 
 }
 
-/** 面板只读视图（宿主读模块导出的 handleUiRequest）：今天谁签了、连签榜。 */
-export async function handleUiRequest({ action, payload } = {}) {
+/** 面板只读视图：今天谁签了、连签榜。 */
+export async function ui({ action, payload } = {}) {
   if (action !== 'status') return { ok: false, error: `未知动作：${action}` };
   const chatKey = String(payload?.chatKey || '');
   if (!/^group:\d+$|^private:\d+$/.test(chatKey)) return { ok: false, error: '需要 chatKey（group:123456）' };
   const rows = [];
   const all = storage?.all?.() ?? {};
   for (const [key, value] of Object.entries(all)) {
-    if (!key.startsWith(`user:${chatKey}:`)) continue;
-    const userId = key.slice(`user:${chatKey}:`.length);
+    if (!key.startsWith(K('user:' + chatKey + ':'))) continue;
+    const userId = key.slice(K('user:' + chatKey + ':').length);
     rows.push({ userId, lastDate: String(value?.lastDate || ''), streak: num(value?.streak, 0, 0, 100000), total: num(value?.total, 0, 0, 1e12) });
   }
   rows.sort((a, b) => b.streak - a.streak || b.total - a.total);

@@ -69,3 +69,4 @@ data/voice-song/
 # 个人人设备份
 data/persona-*.md
 data/persona-*.json
+plugins-archive/
