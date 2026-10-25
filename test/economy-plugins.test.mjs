@@ -48,9 +48,16 @@ const ok = (m) => { pass++; console.log('  ✓ ' + m); };
 const SCOPE = 'group:123456';
 const ALICE = '20001';
 const BOB = '20002';
+// 真实宿主的 ctx 里没有 sender.userId：操作人要从 session.triggerEntries 解析
+// （货币插件自己的 requester() 就是这么做的，我们的签到/红包/商店也走它）
 const ctxFor = (userId) => ({
-  chatKey: SCOPE, kind: 'group', chatId: '123456',
-  sender: { userId }, senderId: userId, selfId: '99999'
+  chatKey: SCOPE, kind: 'group', chatId: '123456', selfId: '99999',
+  session: {
+    status: 'running',
+    chatKey: SCOPE,
+    triggerEntries: [{ id: 1, mid: '9001', senderId: userId, self: false, ts: Date.now() }]
+  },
+  sender: { userId }, senderId: userId
 });
 const run = async (toolId, userId, args = {}) => {
   const tool = getTool(toolId);

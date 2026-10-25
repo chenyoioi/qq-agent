@@ -9,11 +9,18 @@
 //
 // 幂等：一个订单三个幂等键（预扣/结算），都用订单号派生；重复点「确认兑换」不会重复扣钱。
 import { randomInt } from 'node:crypto';
+import { requester } from './context.js';
 
 const DEFAULTS = { maxStock: 9999, allowNegativeStock: false, deliverNotice: '兑换成功，凭这条记录找管理员领取' };
 const ITEMS_KEY = 'shop:items';
 const ORDERS_KEY = 'shop:orders';
 const SEQ_KEY = 'shop:seq';
+/** 取本轮操作人（宿主 ctx 里没有 sender.userId，必须从 triggerEntries 解析）。 */
+function actorOf(ctx) {
+  const r = requester(ctx);
+  return String(r.userId);
+}
+
 
 const num = (v, fb, min, max) => {
   const n = Math.floor(Number(v ?? fb));
@@ -141,9 +148,9 @@ export function register(api) {
     },
     async execute(ctx, args = {}) {
       const scope = String(ctx?.chatKey || '');
-      const userId = String(ctx?.sender?.userId || ctx?.senderId || '').trim();
-      if (!/^[1-9]\d{4,11}$/.test(userId)) {
-        return { content: JSON.stringify({ ok: false, reason: '拿不到购买人的 QQ 号' }), isError: true };
+      let userId = '';
+      try { userId = actorOf(ctx); } catch (error) {
+        return { content: JSON.stringify({ ok: false, reason: String(error?.message || error) }), isError: true };
       }
       const currency = money();
       if (!currency) return { content: JSON.stringify({ ok: false, reason: '货币系统未启用或未授权 shop' }), isError: true };
@@ -255,7 +262,10 @@ export function register(api) {
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     async execute(ctx) {
       const scope = String(ctx?.chatKey || '');
-      const userId = String(ctx?.sender?.userId || ctx?.senderId || '').trim();
+      let userId = '';
+      try { userId = actorOf(ctx); } catch (error) {
+        return { content: JSON.stringify({ ok: false, reason: String(error?.message || error) }), isError: true };
+      }
       const orders = loadOrders().filter((o) => o.scope === scope && o.userId === userId).slice(-20).reverse();
       const bag = storage?.get(`shop:bag:${scope}:${userId}`, []);
       return {

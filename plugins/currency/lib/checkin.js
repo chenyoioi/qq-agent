@@ -16,6 +16,8 @@ const DEFAULTS = {
   announceRank: true
 };
 
+import { requester } from './context.js';
+
 const num = (v, fallback, min, max) => {
   const n = Math.floor(Number(v ?? fallback));
   if (!Number.isFinite(n)) return fallback;
@@ -44,6 +46,12 @@ let storage = null;
 // 内存里的"今天谁签过"缓存，避免每次都读盘；进程重启后由 storage 兜底
 const memory = new Map();
 const K = (k) => `chk:${k}`;
+/** 取本轮操作人（宿主 ctx 里没有 sender.userId，必须从 triggerEntries 解析）。 */
+function actorOf(ctx) {
+  const r = requester(ctx);
+  return String(r.userId);
+}
+
 
 function readSettings() {
   const c = (() => { try { return hostApi?.config?.() ?? {}; } catch { return {}; } })();
@@ -93,7 +101,10 @@ export function register(api) {
         return { content: JSON.stringify({ ok: false, reason: '签到不接受参数' }), isError: true };
       }
       const chatKey = String(ctx?.chatKey || '');
-      const userId = String(ctx?.sender?.userId || ctx?.senderId || '').trim();
+      let userId = '';
+      try { userId = actorOf(ctx); } catch (error) {
+        return { content: JSON.stringify({ ok: false, reason: String(error?.message || error) }), isError: true };
+      }
       if (!chatKey || !/^[1-9]\d{4,11}$/.test(userId)) {
         return { content: JSON.stringify({ ok: false, reason: '拿不到当前会话或发言人的 QQ 号，无法签到' }), isError: true };
       }

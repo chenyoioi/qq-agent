@@ -9,6 +9,7 @@
 // 幂等：每笔转账的 requestId 固定成 `红包:<红包id>:领:<QQ>`。
 //   同一人重试、模型重复调用、进程重启后重放都不会多发一次钱。
 import { randomInt } from 'node:crypto';
+import { requester } from './context.js';
 
 const DEFAULTS = { maxTotal: 10000, maxCount: 20, expireSec: 300 };
 const num = (v, fb, min, max) => {
@@ -19,6 +20,12 @@ const num = (v, fb, min, max) => {
 let hostApi = null;
 let storage = null;
 const K = (k) => `rp:${k}`;
+/** 取本轮操作人（宿主 ctx 里没有 sender.userId，必须从 triggerEntries 解析）。 */
+function actorOf(ctx) {
+  const r = requester(ctx);
+  return String(r.userId);
+}
+
 
 function readSettings() {
   const c = (() => { try { return hostApi?.config?.() ?? {}; } catch { return {}; } })();
@@ -90,12 +97,12 @@ export function register(api) {
     },
     async execute(ctx, args = {}) {
       const scope = String(ctx?.chatKey || '');
-      const senderId = String(ctx?.sender?.userId || ctx?.senderId || '').trim();
       if (!/^group:\d+$/.test(scope)) {
         return { content: JSON.stringify({ ok: false, reason: '红包只能在群里发' }), isError: true };
       }
-      if (!/^[1-9]\d{4,11}$/.test(senderId)) {
-        return { content: JSON.stringify({ ok: false, reason: '拿不到发红包人的 QQ 号' }), isError: true };
+      let senderId = '';
+      try { senderId = actorOf(ctx); } catch (error) {
+        return { content: JSON.stringify({ ok: false, reason: String(error?.message || error) }), isError: true };
       }
       const currency = money();
       if (!currency) return { content: JSON.stringify({ ok: false, reason: '货币系统未启用或未授权 red-packet' }), isError: true };
@@ -153,12 +160,12 @@ export function register(api) {
     },
     async execute(ctx, args = {}) {
       const scope = String(ctx?.chatKey || '');
-      const userId = String(ctx?.sender?.userId || ctx?.senderId || '').trim();
       if (!/^group:\d+$/.test(scope)) {
         return { content: JSON.stringify({ ok: false, reason: '红包只能在群里抢' }), isError: true };
       }
-      if (!/^[1-9]\d{4,11}$/.test(userId)) {
-        return { content: JSON.stringify({ ok: false, reason: '拿不到抢红包人的 QQ 号' }), isError: true };
+      let userId = '';
+      try { userId = actorOf(ctx); } catch (error) {
+        return { content: JSON.stringify({ ok: false, reason: String(error?.message || error) }), isError: true };
       }
       const currency = money();
       if (!currency) return { content: JSON.stringify({ ok: false, reason: '货币系统未启用或未授权 red-packet' }), isError: true };
