@@ -19,20 +19,23 @@ fs.writeFileSync(path.join(DATA_DIR, 'config.json'), JSON.stringify({
         checkin: ['credit'],
         shop: ['reserve', 'capture', 'release', 'credit', 'debit', 'transfer'],
         'red-packet': ['transfer'],
+        tip: ['credit', 'transfer'],
         test: ['credit', 'debit', 'transfer']
       })
     },
     checkin: { enabled: true, baseReward: 20, streakBonus: 5, maxBonus: 50, resetHour: 0, showBalance: true },
     shop: { enabled: true, maxStock: 9999, allowNegativeStock: false, deliverNotice: '凭这条记录找管理员领取' },
-    'red-packet': { enabled: true, maxTotal: 10000, maxCount: 20, expireSec: 300 }
+    'red-packet': { enabled: true, maxTotal: 10000, maxCount: 20, expireSec: 300 },
+    tip: { enabled: true, amount: 10, minGapMinutes: 60, maxPerDay: 8, source: 'mint' }
   },
   extensions: { hotReload: false }
 }, null, 2));
 
 const { loadPlugins } = await import(path.join(ROOT, 'src/plugin-loader.js'));
 const { skillManager } = await import(path.join(ROOT, 'src/skills/manager.js'));
+const { getTool } = await import(path.join(ROOT, 'src/tool-registry.js'));
 await loadPlugins({ log: () => {} });
-for (const id of ['currency', 'checkin', 'shop', 'red-packet']) {
+for (const id of ['currency', 'checkin', 'shop', 'red-packet', 'tip']) {
   try { skillManager.activate(id, {}); } catch (e) { console.log('激活失败', id, e?.message ?? e); }
 }
 
@@ -218,6 +221,56 @@ const balOf = (uid) => money().balance({ scope: SCOPE, userId: uid }).balance;
   assert.deepEqual(balances, [...balances].sort((a, b) => b - a), '按余额降序');
   assert.equal(d.total, balances.reduce((s, b) => s + b, 0), '合计等于各行之和');
   ok(`成员余额页：${d.rows.length} 行（含未开户的 0），合计 ${d.total} ${d.currencyName}`);
+}
+
+// ⑪ 打赏：机器人觉得谁的话有意思，给那条消息的作者发 10 金币（走模型，但硬约束在插件里）
+{
+  const tipTool = getTool('tip__tip_reward');
+  assert.ok(tipTool, 'tip__tip_reward 工具应注册');
+  const tipSkill = skillManager.registry.get('tip');
+  assert.ok(typeof tipSkill.handleUiRequest === 'function', 'tip 应导出 handleUiRequest');
+
+  // 造一轮真实发言：DAVE 说了句有梗的话
+  const DAVE = '20011';
+  const ctx = {
+    chatKey: SCOPE, kind: 'group', chatId: '123456', selfId: '99999',
+    session: { status: 'running', chatKey: SCOPE, trigger: [
+      { id: 1, mid: '8800001', senderId: DAVE, senderName: '丁', self: false, ts: Date.now() },
+      { id: 2, mid: '8800002', senderId: '99999', senderName: '我', self: true, ts: Date.now() }
+    ] },
+    sender: {}, store: {}
+  };
+  const before = balOf(DAVE);
+  const r1 = JSON.parse(String((await tipTool.execute(ctx, { messageId: '8800001', reason: '这梗我服' })).content).split('\n')[0]);
+  assert.equal(r1.ok, true, '打赏应成功');
+  assert.equal(r1.amount, 10, '每笔 10 金币（按设置）');
+  assert.equal(balOf(DAVE), before + 10);
+
+  const r2 = JSON.parse(String((await tipTool.execute(ctx, { messageId: '8800001' })).content).split('\n')[0]);
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason, /已经打赏过/);
+  assert.equal(balOf(DAVE), before + 10, '同一条消息不能重复打赏');
+
+  const r3 = JSON.parse(String((await tipTool.execute(ctx, { messageId: '8800002' })).content).split('\n')[0]);
+  assert.match(r3.reason, /不能打赏自己/);
+
+  // 同一个人一小时内第二次（换条消息）要被冷却拦住
+  ctx.session.trigger.push({ id: 3, mid: '8800003', senderId: DAVE, senderName: '丁', self: false, ts: Date.now() });
+  const r4 = JSON.parse(String((await tipTool.execute(ctx, { messageId: '8800003' })).content).split('\n')[0]);
+  assert.equal(r4.ok, false);
+  assert.match(r4.reason, /刚打赏过/);
+
+  // 金额上限：模型想给 999 也只给 10
+  const EVE = '20012';
+  ctx.session.trigger.push({ id: 4, mid: '8800004', senderId: EVE, senderName: '戊', self: false, ts: Date.now() });
+  const r5 = JSON.parse(String((await tipTool.execute(ctx, { messageId: '8800004', amount: 999 })).content).split('\n')[0]);
+  assert.equal(r5.amount, 10, '模型加码也会被压回设置上限');
+
+  const panel = await tipSkill.handleUiRequest({ action: 'tips', payload: { chatKey: SCOPE } });
+  assert.equal(panel.ok, true);
+  assert.equal(panel.today.count, 2, '今天 2 笔');
+  assert.equal(panel.rows.length, 2);
+  ok('打赏：+10 到账 / 同一条不能重复 / 冷却 60 分钟 / 打赏自己拒绝 / 金额被压回上限 / 面板有记录');
 }
 
 fs.rmSync(DATA_DIR, { recursive: true, force: true });

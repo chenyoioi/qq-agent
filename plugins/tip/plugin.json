@@ -1,0 +1,34 @@
+{
+  "id": "tip",
+  "name": "群友打赏",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "economy",
+  "description": "机器人看到群友某句话特别有意思（有梗、神回复、帮到人）时，自己掏 10 金币打赏过去。按条打赏、每条消息最多一次，同一人一小时最多一次、本群每天有上限，不会刷；面板里能看打赏记录。",
+  "author": "qq-agent",
+  "enabledByDefault": true,
+  "permissions": [],
+  "requires": ["currency.v1"],
+  "settings": {
+    "amount": 10,
+    "minGapMinutes": 60,
+    "maxPerDay": 8,
+    "source": "mint"
+  },
+  "configSchema": {
+    "amount": { "type": "number", "group": "打赏", "label": "每笔金币", "description": "默认 10。模型不能自己改这个数（调用时传更大的值会被压回这里的上限）。" },
+    "minGapMinutes": { "type": "number", "group": "打赏", "label": "同一人冷却（分钟）", "description": "默认 60：同一个人一小时内最多被打赏一次，避免盯着一个人刷。" },
+    "maxPerDay": { "type": "number", "group": "打赏", "label": "本群每天上限（笔）", "description": "默认 8 笔/天/群，防止通胀。" },
+    "source": { "type": "string", "group": "打赏", "label": "金币来源（mint / bot）", "description": "mint=机器人直接印（默认，最简单）；bot=从机器人自己的钱包转，余额不够就打赏失败。" }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "tip-guide",
+        "title": "打赏（给有意思的发言发金币）",
+        "priority": 53,
+        "content": "群里某个人说了**真的有意思**的话（神回复、巧妙玩梗、把事讲明白、帮了别人），而你又确实被逗到/被说服，可以调用 tip_reward 给他打赏金币：把那条消息的 #消息id 传进 messageId，再写一句 reason（比如「这梗我服」「这个解释比我清楚」）。\n调用规则：一条消息最多打赏一次；同一个人一小时内只打赏一次；本群每天有上限。不要为了活跃气氛乱打赏、不要打赏自己、不要打赏管理员或刷屏的人，也不要打赏你自己（机器人）的消息。金额由设置决定，不要自己编数字。\n工具只记账不发消息：想说话就再用 send_message 自然带一句（例如「这层楼值 10 金币」），不想说话就不说；别每条回复都跟一句打赏播报。"
+      }
+    ]
+  }
+}
