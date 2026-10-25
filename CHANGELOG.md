@@ -1,5 +1,32 @@
 # 更新日志
 
+## 1.1.38（2026-10-25）
+
+### 唱歌插件在 Linux 上根本没法用（engine 被写死成 Windows SAPI）
+
+`sing-cover-rvc` 的 `readSettings()` 里写死 `engine: 'sapi'`，而 sapi 走 `powershell.exe`
+（只有 Windows 有）→ 这台 Linux 服务器每次点歌都直接 `spawn powershell.exe ENOENT`。
+
+- 改成：**显式设置优先，没设置时按平台判断**——Windows 用 sapi，非 Windows 用 voxcpm；
+- voxcpm 引擎（代码本来就有）走 `openbmb-voxcpm-demo.hf.space`，实测本机可达（1.3s / 200），
+  并复用 `voxcpm-voice/assets/reference.wav` 克隆音色；
+- 实测：`sing` 唱原创词 40s 出 7 秒语音；曲库《小星星》**42.6s 出 17 秒带伴奏语音**，媒体投递成功；
+- 翻唱（RVC 换声）仍不可用：现在只有 Windows 版环境，提示改成
+  「RVC 环境目前只有 Windows 版（要 NVIDIA 显卡），这台是 linux，装不了 —— 念唱点歌不受影响」，
+  不再甩安装者机器上的 `F:\Users\35215\...cover.py` 这种路径。
+
+### 顺带三个真问题
+
+- **`qq-like` 的提示词没生效**：它的清单用 `prompt.when + instruction` 这种写法，
+  而宿主只认 `prompt.sections[]` → "什么时候该点赞"从没进过提示词，300 次会话里只被调用过 1 次。
+  现在两种写法都认（自动拼成一个 section）；
+- **赞点上了却没回话**：那次 `qq_like` 成功点了 10 个（QQ 单人每日上限就是 10，要 20 只能给 10），
+  紧接着 `send_message` 因**协议端掉线**报 `fetch failed`，整轮没发出去。`sender` 现在遇到
+  「没发出去且协议端未连接」会补一句"协议端未连接：QQ 可能已掉线，需要重新扫码"；
+- **备用模型踩坑**：上次把 ai2 的 `GLM-5.2` 填进了 tokenrhythm 的 `fallbackModels`，
+  主模型失败时换过去就 `400 MODEL_NOT_AVAILABLE`。现在 400 且还有备用模型时会继续尝试下一个
+  （不会整轮判死），配置也改回同一家的 `mimo-v2.6-flash`。备用模型必须属于同一家提供商。
+
 ## 1.1.37（2026-10-22）
 
 ### 554 是什么：中转站 CDN 的 16 秒掐断，顺便让备用模型真能接上

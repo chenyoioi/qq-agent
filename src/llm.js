@@ -21,7 +21,8 @@ const GATEWAY_CODES = {
   525: 'CDN 与源站 TLS 握手失败',
   526: 'CDN 源站证书无效',
   527: 'CDN 与源站连接被中断',
-  554: '上游/网关异常（中转站返回的非标准码，通常是上游节点失败或被限流）'
+  554: '上游/网关异常（中转站返回的非标准码，通常是上游节点失败或被限流）',
+  400: '请求被拒（常见于模型 ID 在该提供商不存在，可换模型或检查备用模型是否属于同一家）'
 };
 
 function gatewayHint(status, body = '') {
@@ -114,7 +115,11 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     lastError = new Error(`模型 API HTTP ${res.status}：${text.slice(0, 500)}${gatewayHint(res.status, text)}`);
     // 5xx 一律可重试：中转站/CDN 会吐 520~527、554 这类非标准网关码，
     // 以前只认 500/502/503/504，碰上 554 就直接判死，备用模型完全没机会上场。
-    if (!(res.status >= 500 || [408, 409, 425, 429].includes(res.status))) break;
+    // 400 也继续试：多是因为"这个模型 ID 你这儿没有"（MODEL_NOT_AVAILABLE），
+    // 换下一个备用模型往往就好了，没必要整轮运行直接失败。
+    const hasMore = tryModels.indexOf(model) < tryModels.length - 1;
+    const retryable = res.status >= 500 || [408, 409, 425, 429].includes(res.status) || (res.status === 400 && hasMore);
+    if (!retryable) break;
     if (tryModels.indexOf(model) < tryModels.length - 1) {
       console.warn(`[llm] ${model} 返回 ${res.status}，换备用模型重试`);
     }

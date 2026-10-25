@@ -194,7 +194,11 @@ export class SendQueue {
       else failed.push({ error: String(r.reason?.message ?? r.reason) });
     }
     if (sent.length === 0 && failed.length > 0) {
-      throw new Error(failed.map((f) => f.error).join('；'));
+      const detail = failed.map((f) => f.error).join('；');
+      // 协议端掉线时底层只会吐 "fetch failed / timeout"，模型和用户都看不懂。
+      // 补一句人话：九成是 QQ 掉线要重新扫码。
+      const offline = this.onebot && this.onebot.connected === false;
+      throw new Error(offline ? `${detail}｜协议端未连接：QQ 可能已掉线，需要重新扫码（控制台 → 协议端）` : detail);
     }
     return { sent, failed };
   }

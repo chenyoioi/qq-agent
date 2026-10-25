@@ -453,7 +453,26 @@ export class SkillManager {
     for (const skill of this.registry.list()) {
       const st = this.isActive(skill.manifest.id, context);
       if (!st.active) continue;
-      const sections = skill.manifest.prompt?.sections || [];
+      // 两种写法都认：
+      //   prompt.sections[]          （reply-meme / whale-memes 这类）
+      //   prompt.when + instruction  （qq-like 这类；宿主以前只认 sections，
+      //                              于是这些技能的"什么时候用"根本没进提示词，
+      //                              模型自然几乎不会调它）
+      let sections = skill.manifest.prompt?.sections || [];
+      if (!sections.length) {
+        const p = skill.manifest.prompt || {};
+        const join = (v) => (Array.isArray(v) ? v.join('\n') : String(v ?? ''));
+        const body = [join(p.when), join(p.instruction), join(p.content), join(p.rules)]
+          .map((x) => x.trim()).filter(Boolean).join('\n');
+        if (body) {
+          sections = [{
+            id: 'guidance',
+            title: skill.manifest.name || skill.manifest.id,
+            priority: Number(p.priority) || 50,
+            content: body
+          }];
+        }
+      }
       for (const s of sections) out.push({ ...s, skillId: skill.manifest.id });
       // 动态片段：Skill 可选实现 promptSections(context)
       if (typeof skill.promptSections === 'function') {
