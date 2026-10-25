@@ -7,6 +7,11 @@
 // 幂等：requestId 固定成「签到:<QQ>:<业务日>」，同一天重复触发、失败重试都不会多发。
 const DEFAULTS = { baseReward: 20, streakBonus: 5, maxBonus: 50, resetHour: 0, showBalance: true };
 const TRIGGERS = ['签到', '打卡', '领金币', '每日签到', '签到一下'];
+// 查自己余额（同样不走模型：问一句就把数字报出来）
+const QUERY_TRIGGERS = [
+  '余额', '我的余额', '查余额', '余额查询', '我有多少金币', '我多少金币',
+  '有多少金币', '金币余额', '我的金币', '金币'
+];
 
 const num = (v, fallback, min, max) => {
   const n = Math.floor(Number(v ?? fallback));
@@ -63,6 +68,26 @@ export function setup(api) {
   log = api.log || (() => {});
 }
 
+/** 「余额 / 我的金币」：报自己的余额 + 连签 + 今天签没签。 */
+async function replyBalance(ctx, { currency, userId, conf: s }) {
+  const bal = currency.balance({ scope: ctx.chatKey, userId });
+  if (!bal?.ok) {
+    await reply(ctx, '余额这会儿查不到，等会儿再试');
+    return;
+  }
+  const unit = (() => {
+    try { const info = currency.info?.(); return info?.currencyName ? String(info.currencyName) : '金币'; } catch { return '金币'; }
+  })();
+  const bits = [`你现在有 ${bal.balance} ${unit}`];
+  if (Number(bal.held) > 0) bits.push(`其中冻结 ${bal.held}，可用 ${bal.available}`);
+  const state = storage?.get(keyOf(ctx.chatKey, userId), null) || {};
+  const today = businessDate(new Date(), s.resetHour);
+  const streak = num(state.streak, 0, 0, 100000);
+  if (streak > 0) bits.push(`签到连签 ${streak} 天（今天${state.lastDate === today ? '已签' : '还没签'}）`);
+  else bits.push('还没签到过，发「签到」领金币');
+  await reply(ctx, bits.join('，'));
+}
+
 async function reply(ctx, text) {
   try {
     // 确定性命令的回复不能被"每分钟 3 条"这类限流吞掉：开一个短豁免窗口
@@ -90,14 +115,24 @@ function markHandled(ctx) {
 export const hooks = {
   async onMessage(ctx) {
     const text = cleanText(ctx?.text);
-    if (!text || !TRIGGERS.includes(text)) return;
-    if (!/^group:\d+$/.test(String(ctx?.chatKey || ''))) return;   // 只在群里签
+    if (!text) return;
+    const isCheckin = TRIGGERS.includes(text);
+    const isQuery = QUERY_TRIGGERS.includes(text);
+    if (!isCheckin && !isQuery) return;
+    if (!/^group:\d+$/.test(String(ctx?.chatKey || ''))) return;   // 只在群里签/查
     const userId = String(ctx?.senderId || '').trim();
     if (!/^[1-9]\d{4,11}$/.test(userId)) return;
 
     const currency = money();
     if (!currency) return;                       // 货币没启用就交给模型处理
     const s = conf();
+
+    // 查余额：只报自己的（别人问他人的余额会让模型/面板去查，避免这里越权）
+    if (isQuery) {
+      await replyBalance(ctx, { currency, userId, conf: s });
+      markHandled(ctx);
+      return;
+    }
     const today = businessDate(new Date(), s.resetHour);
     const k = keyOf(ctx.chatKey, userId);
     const state = storage?.get(k, null) || {};

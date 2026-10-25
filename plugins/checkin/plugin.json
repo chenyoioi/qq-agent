@@ -1,14 +1,16 @@
 {
   "id": "checkin",
   "name": "每日签到",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "apiVersion": 1,
   "category": "economy",
-  "description": "群里说「签到」就领金币，连签有加成、断签归零。完全不走模型：命中触发词直接用货币能力记账并回复（0 token、秒回）；重复签到、重试都不会多发。",
+  "description": "群里说「签到」就领金币（连签有加成、断签归零），说「余额 / 我的金币」就报自己还剩多少金币。完全不走模型：命中触发词就直接记账/查询并回复（0 token、秒回）；重复签到、重试都不会多发。",
   "author": "qq-agent",
   "enabledByDefault": true,
   "permissions": [],
-  "requires": ["currency.v1"],
+  "requires": [
+    "currency.v1"
+  ],
   "settings": {
     "baseReward": 20,
     "streakBonus": 5,
@@ -17,10 +19,35 @@
     "showBalance": true
   },
   "configSchema": {
-    "baseReward": { "type": "number", "group": "签到", "label": "每日基础金币", "description": "当天第一次签到的保底金币，默认 20。" },
-    "streakBonus": { "type": "number", "group": "签到", "label": "连签每天加成", "description": "连签第 N 天额外加 (N-1)×该值，默认 5。" },
-    "maxBonus": { "type": "number", "group": "签到", "label": "连签加成上限", "description": "默认 50，防止连签几百天一次发爆。" },
-    "resetHour": { "type": "number", "group": "签到", "label": "每日重置时刻（0~23 点）", "description": "几点算新的一天，默认 0 点。" },
-    "showBalance": { "type": "boolean", "group": "签到", "label": "回复里带上余额", "description": "关闭后只回签到结果，不报余额。" }
+    "baseReward": {
+      "type": "number",
+      "group": "签到",
+      "label": "每日基础金币",
+      "description": "当天第一次签到的保底金币，默认 20。"
+    },
+    "streakBonus": {
+      "type": "number",
+      "group": "签到",
+      "label": "连签每天加成",
+      "description": "连签第 N 天额外加 (N-1)×该值，默认 5。"
+    },
+    "maxBonus": {
+      "type": "number",
+      "group": "签到",
+      "label": "连签加成上限",
+      "description": "默认 50，防止连签几百天一次发爆。"
+    },
+    "resetHour": {
+      "type": "number",
+      "group": "签到",
+      "label": "每日重置时刻（0~23 点）",
+      "description": "几点算新的一天，默认 0 点。"
+    },
+    "showBalance": {
+      "type": "boolean",
+      "group": "签到",
+      "label": "回复里带上余额",
+      "description": "关闭后只回签到结果，不报余额。"
+    }
   }
 }

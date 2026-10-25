@@ -98,6 +98,26 @@ const balOf = (uid) => money().balance({ scope: SCOPE, userId: uid }).balance;
   ok('重复签到只回复「今天已经签过」，不重复发币');
 }
 
+// ②b 查余额：群友问一句就报自己的余额（不走模型）
+{
+  const r1 = await fire('checkin', ALICE, '余额');
+  assert.equal(r1.sent.length, 1, '查余额应直接回一条');
+  assert.match(r1.sent[0], /你现在有 20 金币/);
+  assert.match(r1.sent[0], /连签 1 天/);
+  assert.match(r1.sent[0], /今天已签/, '今天签过要说明');
+  assert.deepEqual(r1.marked, [1], '查余额也要标已读');
+
+  const r2 = await fire('checkin', BOB, '我的金币');
+  assert.match(r2.sent[0], /你现在有 0 金币/, '没签过的人是 0');
+  assert.match(r2.sent[0], /还没签到过/);
+
+  for (const text of ['余额宝收益怎么样', '这个金币真难赚']) {
+    const r = await fire('checkin', ALICE, text);
+    assert.equal(r.sent.length, 0, `「${text}」不该被当成查余额`);
+  }
+  ok('查余额：「余额 / 我的金币」报自己的金币与连签，别的话不误触发');
+}
+
 // ③ 商店：一行一个商品，带说明和金币单位
 {
   const r = await fire('shop', BOB, '商店');
