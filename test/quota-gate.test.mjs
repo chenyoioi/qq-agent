@@ -38,6 +38,12 @@ fs.writeFileSync(path.join(DATA_DIR, 'quota-guard', 'ledger.json'), JSON.stringi
 // 用真实目录加载（插件内部按 ../../src 引用核心模块，拷到别处会解析失败）
 const realRoots = { skills: path.join(ROOT, 'skills'), plugins: path.join(ROOT, 'plugins') };
 
+// quota-guard 是可选扩展（可能已被卸载）。没装就跳过，而不是让 npm test 直接红。
+if (!fs.existsSync(path.join(ROOT, 'plugins', 'quota-guard', 'plugin.json'))) {
+  console.log('\nquota-guard 未安装，跳过接线测试 ⤵');
+  process.exit(0);
+}
+
 setRuntimeConfig({
   ...getConfig(),
   skills: { 'quota-guard': { enabled: true, resetHour: 0, defaultDailyLimit: 100, blockWhenSendLimited: true } },

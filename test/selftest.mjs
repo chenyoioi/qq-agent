@@ -312,7 +312,10 @@ refs:
   assert.ok(user1.includes('【当前时间】') && user1.includes('【过去状态】'), '用户消息含时间与过去状态');
   assert.ok(req1.tools?.some((t) => t.function.name === 'send_message'), 'send_message 工具已暴露');
   const toolNames = req1.tools.map((t) => t.function.name);
-  assert.ok(!toolNames.some((n) => n.includes('qq_')), '工具名不带 qq_ 前缀');
+  // 只约束内置工具：它们是本项目自己的命名（历史包袱 qq_ 前缀已去掉）。
+  // 扩展工具带 <技能id>__ 命名空间，插件自己叫 qq_like 之类不算违规。
+  const builtinToolNames = toolNames.filter((n) => !n.includes('__'));
+  assert.ok(!builtinToolNames.some((n) => n.includes('qq_')), '内置工具名不带 qq_ 前缀');
   assert.ok(!toolNames.includes('wait_for_messages') && !toolNames.includes('set_wake_config'), '无等待/唤醒类工具');
   pass('运行 1：零历史提示词 + 工具集正确', `${user1.length} 字符用户消息`);
 
