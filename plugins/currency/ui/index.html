@@ -34,7 +34,12 @@
 <body>
 <div class="row" style="justify-content:space-between;margin-bottom:10px">
   <h2>经济系统</h2>
-  <div class="row"><label class="muted">群号</label><input id="chatId" placeholder="1062533151" style="width:140px" /><button id="refresh">刷新</button></div>
+  <div class="row">
+    <label class="muted">群</label>
+    <select id="chatSel" style="max-width:220px"></select>
+    <input id="chatId" placeholder="手动填群号" style="width:130px" />
+    <button id="refresh">刷新</button>
+  </div>
 </div>
 <div class="card" style="padding:10px 14px">
   <div class="row" style="justify-content:space-between">
@@ -161,7 +166,7 @@ async function loadRp() {
   if (!d.ok) { $('#rpRows').innerHTML = `<tr><td colspan="5" class="warn">${esc(d.error)}</td></tr>`; return; }
   $('#rpRows').innerHTML = (d.rows || []).map((r) => `
     <tr><td class="muted">${esc(r.id)}</td><td>${esc(r.senderId)}</td><td>${esc(r.claimedAmount)}/${esc(r.total)} · ${esc(r.claimedCount)}/${esc(r.count)}</td>
-    <td>${esc(r.claimedCount)}</td><td class="${r.status === 'open' ? 'ok' : 'muted'}">${esc(r.status)}</td></tr>`).join('')
+    <td>${esc(r.claimedCount)}</td><td class="${r.status === 'open' ? 'ok' : 'muted'}">${esc(r.status === 'open' && r.expiresAt && r.expiresAt < Date.now() ? 'expired' : r.status)}</td></tr>`).join('')
     || '<tr><td colspan="5" class="muted">本群还没有红包</td></tr>';
 }
 
@@ -234,14 +239,40 @@ document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('cli
 }));
 
 $('#refresh').addEventListener('click', () => { localStorage.setItem(CHAT_KEY, $('#chatId').value.trim()); boot(); });
-$('#chatId').addEventListener('change', () => localStorage.setItem(CHAT_KEY, $('#chatId').value.trim()));
-$('#chatId').value = localStorage.getItem(CHAT_KEY) || '';
+$('#chatId').addEventListener('change', () => { localStorage.setItem(CHAT_KEY, $('#chatId').value.trim()); boot(); });
+$('#chatSel').addEventListener('change', () => {
+  const v = $('#chatSel').value;
+  if (v) { $('#chatId').value = v; localStorage.setItem(CHAT_KEY, v); boot(); }
+});
+
+/** 群号来源：本地记住的 → 白名单第一个。面板以前空着就只显示"先填群号"，
+ *  用户以为没数据；现在默认就会展示第一个群。 */
+async function initChat() {
+  const saved = localStorage.getItem(CHAT_KEY) || '';
+  let groups = [];
+  try {
+    const cfg = await (await fetch('/api/config')).json();
+    groups = (cfg.allow?.groups || []).filter(Boolean);
+  } catch { /* 拿不到就只用手填 */ }
+  $('#chatSel').innerHTML = ['<option value="">（选择群）</option>']
+    .concat(groups.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`)).join('');
+  if (saved) $('#chatId').value = saved;
+  else if (groups.length) $('#chatId').value = groups[0];
+  if (groups.includes($('#chatId').value)) $('#chatSel').value = $('#chatId').value;
+  localStorage.setItem(CHAT_KEY, $('#chatId').value.trim());
+}
 
 async function boot() {
-  if (!scope()) { $('#status').textContent = '先填群号'; return; }
-  try { await loadShop(); } catch (e) { $('#status').innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
+  if (!scope()) { $('#status').textContent = '先选择或填写群号'; return; }
+  $('#chatSel').value = String($('#chatId').value || '').trim();
+  try {
+    await loadShop();
+    // 另外两个分页有数据也顺带刷一下（切换时也会再刷）
+    loadCheckin().catch(() => {});
+    loadRp().catch(() => {});
+  } catch (e) { $('#status').innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
 }
-boot();
+initChat().then(boot);
 </script>
 </body>
 </html>
