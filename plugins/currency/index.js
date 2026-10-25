@@ -38,9 +38,53 @@ export function createCurrencyPlugin({ directory, io, now = Date.now } = {}) {
         if (!running || hostApi?.isSkillActive?.('currency') === false) return undefined;
         return service.client(consumer, epoch);
       }
+    },
+
+    /**
+     * 控制台面板（只读）：按群列出每个人的余额。
+     * 传 userIds（群成员列表）时连"还没开过户"的人也会返回 0，方便看全群。
+     */
+    ui({ action = '', payload = {} } = {}) {
+      if (action !== 'members') return { ok: false, error: `未知动作：${action}` };
+      const scope = String(payload?.scope || payload?.chatKey || '');
+      if (!/^group:\d+$|^private:\d+$/.test(scope)) return { ok: false, error: 'scope 形如 group:123456' };
+      if (!running) return { ok: false, error: '货币系统未启用' };
+      const read = (kind, args) => {
+        try { return service.read(kind, 'currency', args, true); } catch (error) { return { ok: false, message: String(error?.message ?? error) }; }
+      };
+      const ranked = read('rank', { scope, limit: 100 });
+      const byId = new Map();
+      for (const a of (ranked?.accounts || [])) byId.set(String(a.userId), { ...a, inLedger: true });
+      const want = Array.isArray(payload?.userIds) ? payload.userIds.map(String) : [];
+      for (const uid of want.slice(0, 2000)) {
+        if (byId.has(uid)) continue;
+        if (!/^[1-9]\d{4,11}$/.test(uid)) continue;
+        const b = read('balance', { scope, userId: uid });
+        byId.set(uid, {
+          userId: uid,
+          balance: b?.ok ? b.balance : 0,
+          held: b?.ok ? b.held : 0,
+          available: b?.ok ? b.available : 0,
+          inLedger: !!b?.ok
+        });
+      }
+      const rows = [...byId.values()].sort((x, y) => (y.balance || 0) - (x.balance || 0) || String(x.userId).localeCompare(String(y.userId)));
+      return {
+        ok: true,
+        scope,
+        currencyName: ranked?.currencyName || '金币',
+        rows,
+        total: rows.reduce((sum, r) => sum + (Number(r.balance) || 0), 0),
+        holders: rows.filter((r) => Number(r.balance) > 0).length
+      };
     }
   };
 }
 
 const plugin = createCurrencyPlugin();
 export const { setup, activate, deactivate, dispose, available, providers } = plugin;
+
+/** 控制台面板入口（宿主读模块导出的 handleUiRequest）。 */
+export async function handleUiRequest(req = {}) {
+  return plugin.ui(req);
+}

@@ -1035,6 +1035,25 @@ export function createApp({ log = console.log } = {}) {
         }
       }
 
+      // 群成员列表（控制台「金币 → 成员」这类页面要用昵称兜底）
+      if (pathname === '/api/onebot/members' && method === 'GET') {
+        const gid = String(new URL(req.url, 'http://127.0.0.1').searchParams.get('group') || '').replace(/\D/g, '');
+        if (!gid) return json(res, 400, { error: '缺少 group 参数' });
+        try {
+          const list = await onebot.call('get_group_member_list', { group_id: Number(gid) });
+          const members = (Array.isArray(list) ? list : (list?.data ?? []))
+            .map((m) => ({
+              id: String(m.user_id),
+              name: String(m.card || m.nickname || m.user_id),
+              nickname: String(m.nickname || '')
+            }))
+            .filter((m) => m.id);
+          return json(res, 200, { group: gid, members });
+        } catch (error) {
+          return json(res, 502, { error: String(error?.message ?? error) });
+        }
+      }
+
       if (pathname === '/api/onebot/friends' && method === 'GET') {
         try {
           const list = await onebot.call('get_friend_list');

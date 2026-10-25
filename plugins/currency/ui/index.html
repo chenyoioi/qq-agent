@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>成员余额</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f7f8fa; --card:#fff; --line:#e3e6ec; --text:#1f2329; --muted:#6b7280; --accent:#2f6fed; --ok:#0f7a3d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#15171c; --card:#1d2027; --line:#2c313b; --text:#e6e8ec; --muted:#9aa3b2; --accent:#6ea0ff; --ok:#4ac26b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; font:13px/1.55 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background:var(--bg); color:var(--text); }
+  h2 { font-size:15px; margin:0 0 10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input, select, button { font:inherit; color:inherit; background:transparent; border:1px solid var(--line); border-radius:7px; padding:6px 9px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-size:12px; font-weight:600; position:sticky; top:0; background:var(--card); }
+  td.num { text-align:right; font-variant-numeric: tabular-nums; }
+  th.num { text-align:right; }
+  .muted { color:var(--muted); } .ok { color:var(--ok); }
+  .pill { display:inline-block; padding:1px 7px; border:1px solid var(--line); border-radius:999px; font-size:11px; color:var(--muted); }
+  .pill.hot { color:var(--ok); border-color:var(--ok); }
+  .table-wrap { max-height: calc(100vh - 260px); overflow:auto; }
+  .name { max-width: 220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; vertical-align:bottom; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <h2>成员余额</h2>
+    <div class="row">
+      <select id="chatSel" style="max-width:200px"></select>
+      <input id="chatId" placeholder="手动填群号" style="width:130px" />
+      <input id="q" placeholder="搜 QQ / 昵称" style="width:150px" />
+      <label class="row" style="gap:4px"><input type="checkbox" id="onlyRich" /><span class="muted">只看有余额</span></label>
+      <button id="refresh">刷新</button>
+    </div>
+  </div>
+  <div class="row" style="margin-top:6px"><span class="muted" id="status">正在读取…</span></div>
+  <div class="row" id="stats" style="margin-top:4px"></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>昵称</th><th>QQ</th><th class="num">余额</th><th class="num">冻结</th><th class="num">可用</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const KEY = 'currency-panel-chat';
+let all = [];
+let unitName = '金币';
+const scope = () => { const id = String($('#chatId').value || '').replace(/\D/g, ''); return id ? `group:${id}` : ''; };
+
+async function call(action, payload = {}) {
+  const r = await fetch('/api/plugin-ui/currency/action', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action, payload: { scope: scope(), ...payload } })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+/** 群成员列表（拿昵称；拿不到也能显示 QQ） */
+async function groupMembers() {
+  const id = String($('#chatId').value || '').replace(/\D/g, '');
+  if (!id) return [];
+  try {
+    const r = await fetch(`/api/onebot/members?group=${encodeURIComponent(id)}`);
+    const j = await r.json();
+    return Array.isArray(j.members) ? j.members : [];
+  } catch { return []; }
+}
+
+function render() {
+  const q = String($('#q').value || '').trim().toLowerCase();
+  const onlyRich = $('#onlyRich').checked;
+  let rows = all;
+  if (onlyRich) rows = rows.filter((r) => Number(r.balance) > 0);
+  if (q) rows = rows.filter((r) => String(r.userId).includes(q) || String(r.name || '').toLowerCase().includes(q));
+  $('#rows').innerHTML = rows.map((r, i) => `
+    <tr>
+      <td class="muted">${i + 1}</td>
+      <td><span class="name" title="${esc(r.name || '')}">${esc(r.name || '—')}</span></td>
+      <td class="muted">${esc(r.userId)}</td>
+      <td class="num">${esc(r.balance)}</td>
+      <td class="num muted">${esc(r.held || 0)}</td>
+      <td class="num">${esc(r.available ?? r.balance)}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">没有匹配的人</td></tr>';
+  const shown = rows.length;
+  const sum = rows.reduce((s, r) => s + (Number(r.balance) || 0), 0);
+  $('#stats').innerHTML = `<span class="pill">显示 ${shown} 人</span>
+    <span class="pill">合计 ${sum} ${esc(unitName)}</span>
+    <span class="pill hot">有余额 ${rows.filter((r) => Number(r.balance) > 0).length} 人</span>`;
+}
+
+async function refresh() {
+  if (!scope()) { $('#status').textContent = '先选择或填写群号'; return; }
+  $('#status').textContent = '读取中…';
+  try {
+    const members = await groupMembers();
+    const d = await call('members', { userIds: members.map((m) => m.id) });
+    if (!d.ok) { $('#status').textContent = '读取失败：' + (d.error || ''); return; }
+    unitName = d.currencyName || '金币';
+    const nameOf = new Map(members.map((m) => [String(m.id), m.name]));
+    all = (d.rows || []).map((r) => ({ ...r, name: nameOf.get(String(r.userId)) || '' }));
+    // 成员名单里还没有账户的人也列出来（余额 0），这样"每个人"都在
+    const known = new Set(all.map((r) => String(r.userId)));
+    for (const m of members) {
+      const id = String(m.id);
+      if (known.has(id)) continue;
+      all.push({ userId: id, name: m.name || '', balance: 0, held: 0, available: 0, inLedger: false });
+    }
+    all.sort((x, y) => (Number(y.balance) || 0) - (Number(x.balance) || 0));
+    render();
+    $('#status').textContent = members.length
+      ? `群成员 ${members.length} 人 · 有账户 ${all.filter((r) => r.inLedger).length} 人 · 单位「${unitName}」`
+      : `拉到 ${d.rows?.length || 0} 个账户（群成员列表拿不到，只显示有账户的人）`;
+  } catch (e) { $('#status').textContent = '读取失败：' + e.message; }
+}
+
+async function initChat() {
+  const saved = localStorage.getItem(KEY) || '';
+  let groups = [];
+  try { const cfg = await (await fetch('/api/config')).json(); groups = (cfg.allow?.groups || []).filter(Boolean); } catch {}
+  $('#chatSel').innerHTML = ['<option value="">（选择群）</option>'].concat(groups.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`)).join('');
+  if (saved) $('#chatId').value = saved; else if (groups.length) $('#chatId').value = groups[0];
+  if (groups.includes($('#chatId').value)) $('#chatSel').value = $('#chatId').value;
+  localStorage.setItem(KEY, $('#chatId').value.trim());
+}
+
+$('#refresh').addEventListener('click', () => { localStorage.setItem(KEY, $('#chatId').value.trim()); refresh(); });
+$('#chatSel').addEventListener('change', () => { if ($('#chatSel').value) { $('#chatId').value = $('#chatSel').value; localStorage.setItem(KEY, $('#chatSel').value); refresh(); } });
+$('#chatId').addEventListener('change', () => { localStorage.setItem(KEY, $('#chatId').value.trim()); refresh(); });
+$('#q').addEventListener('input', render);
+$('#onlyRich').addEventListener('change', render);
+initChat().then(refresh);
+</script>
+</body>
+</html>

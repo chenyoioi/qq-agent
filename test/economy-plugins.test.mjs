@@ -201,5 +201,24 @@ const balOf = (uid) => money().balance({ scope: SCOPE, userId: uid }).balance;
   ok('三个面板接口可用（商品增删改 / 签到榜 / 红包列表）');
 }
 
+// ⑩ 成员余额页（currency 的只读面板）：群成员里没账户的也给 0，按余额降序
+{
+  const currency = skillManager.registry.get('currency');
+  assert.ok(typeof currency.handleUiRequest === 'function', '货币插件应导出 handleUiRequest');
+  const d = await currency.handleUiRequest({
+    action: 'members',
+    payload: { scope: SCOPE, userIds: [ALICE, BOB, CAROL, '20009'] }   // 20009 从没开过户
+  });
+  assert.equal(d.ok, true);
+  const byId = new Map(d.rows.map((r) => [String(r.userId), r]));
+  assert.ok(byId.has('20009'), '没开过户的群成员也要出现在列表里（余额 0）');
+  assert.equal(byId.get('20009').balance, 0);
+  assert.ok(byId.get(ALICE).balance > 0, '有余额的人应显示真实金额');
+  const balances = d.rows.map((r) => Number(r.balance) || 0);
+  assert.deepEqual(balances, [...balances].sort((a, b) => b - a), '按余额降序');
+  assert.equal(d.total, balances.reduce((s, b) => s + b, 0), '合计等于各行之和');
+  ok(`成员余额页：${d.rows.length} 行（含未开户的 0），合计 ${d.total} ${d.currencyName}`);
+}
+
 fs.rmSync(DATA_DIR, { recursive: true, force: true });
 console.log(`\n经济插件（确定性）${pass} 项检查通过 ✅`);
