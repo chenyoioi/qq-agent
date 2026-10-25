@@ -1076,13 +1076,23 @@ body.skill-drawer-open { overflow: hidden; }   /* 抽屉打开时锁背景滚动
 /* 扩展自带面板（iframe） */
 .plugin-panel-frame { width: 100%; height: 100%; min-height: calc(100vh - 150px); border: 0; background: transparent; display: block; }
 
-/* 同一组的插件面板：一个页签 + 子页签 */
-.panel-subtabs { display: flex; gap: 6px; padding: 8px 12px 0; flex-wrap: wrap; }
-.panel-subtab {
-  border: 1px solid var(--border-soft); background: transparent; color: var(--muted-text);
-  border-radius: 7px; padding: 5px 12px; cursor: pointer; font-size: 13px;
+/* 同一组的插件面板：一个页签 + 子页签
+   ⚠️ .view 本身是横排 flex（左侧列表 + 右侧详情那种布局），
+   直接往里塞子页签会被拉成"三根竖条"。所以组合面板改成竖排：
+   上面一行子页签（定高、横向），下面 iframe 占满剩余空间。 */
+.view.panel-view { flex-direction: column; }
+.panel-subtabs {
+  display: flex; flex: 0 0 auto; flex-direction: row; align-items: center;
+  gap: 6px; padding: 10px 14px 8px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-soft);
 }
+.panel-subtab {
+  flex: 0 0 auto; width: auto; height: auto; align-self: center;
+  border: 1px solid var(--border-soft); background: transparent; color: var(--muted-text);
+  border-radius: 999px; padding: 4px 14px; cursor: pointer; font-size: 13px; line-height: 1.6;
+}
+.panel-subtab:hover { color: var(--text); border-color: var(--accent); }
 .panel-subtab.on { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); }
-.panel-stack { position: relative; flex: 1; min-height: 0; }
-.panel-stack iframe { display: none; }
+.panel-stack { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.panel-stack iframe { display: none; flex: 1 1 auto; width: 100%; min-height: 0; }
 .panel-stack iframe.on { display: block; }

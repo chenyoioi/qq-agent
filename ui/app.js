@@ -1411,8 +1411,10 @@ async function loadPluginPanels() {
     };
 
     if (list.length === 1) {
+      section.classList.add('panel-single', 'panel-view');
       section.appendChild(makeFrame(list[0]));
     } else {
+      section.classList.add('panel-view');
       // 多个插件合成一页：顶部子页签
       const bar = document.createElement('div');
       bar.className = 'panel-subtabs';
