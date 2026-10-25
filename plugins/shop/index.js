@@ -333,6 +333,10 @@ export async function handleUiRequest({ action, payload } = {}) {
     const reason = String(p.reason || '面板手动操作').slice(0, 200);
     if (!/^group:\d+$|^private:\d+$/.test(scope)) return { ok: false, error: 'scope 形如 group:123456' };
     if (!/^[1-9]\d{4,11}$/.test(userId)) return { ok: false, error: 'userId 需要真实 QQ 号' };
+    // 查余额不需要金额；别的操作才校验
+    if (op === 'balance') {
+      try { return currency.balance({ scope, userId }); } catch (error) { return { ok: false, error: String(error?.message ?? error) }; }
+    }
     if (!Number.isSafeInteger(amount) || amount <= 0) return { ok: false, error: 'amount 需要正整数' };
     const base = `面板:${Date.now().toString(36)}${randomInt(100, 999)}`;
     try {
@@ -342,9 +346,6 @@ export async function handleUiRequest({ action, payload } = {}) {
         const toUserId = String(p.toUserId || '').trim();
         if (!/^[1-9]\d{4,11}$/.test(toUserId)) return { ok: false, error: 'toUserId 需要真实 QQ 号' };
         return currency.transfer({ scope, fromUserId: userId, toUserId, amount, requestId: `${base}:转`, reason });
-      }
-      if (op === 'balance') {
-        return currency.balance({ scope, userId });
       }
       return { ok: false, error: 'op 只能是 credit / debit / transfer / balance' };
     } catch (error) {
