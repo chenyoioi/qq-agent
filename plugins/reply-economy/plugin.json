@@ -1,0 +1,66 @@
+{
+  "id": "reply-economy",
+  "name": "闲聊减负",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "model",
+  "description": "一眼就能看出是日常闲聊的消息（短句、没图、没求助词），机器人回复时自动走「轻量模式」：关掉深度思考、把输出上限压低、从模型眼前裁掉搜索/知识库/媒体这类重工具——省思考 token、省多余的调用轮次，让整个软件在大部分日常消息上少转很多无用的圈。判定是保守的：只要消息带图片、带求助词或偏长，就按原来的全功率跑，宁可少省也不误伤。（与「通用思考控制」的 smart 档各管各的：本插件只对判成闲聊的轮次动手，且在转换链里靠后执行，闲聊轮的结论以本插件为准。）",
+  "author": "DSH",
+  "entry": "index.js",
+  "enabledByDefault": true,
+  "capabilities": [
+    "llm.request-params",
+    "llm.usage"
+  ],
+  "settings": {
+    "enabled": true,
+    "maxTriggerChars": 30,
+    "complexWords": "为什么,怎么,如何,解释,分析,推荐,比较,评测,评价,教程,攻略,代码,编程,数学,物理,化学,翻译,总结,排行,区别,原理,故障,报错,帮忙,搜,查一下,查查,新闻,天气,价格,多少,链接,下载,打开,看看,是什么,是谁,什么意思,教我,帮我,图,表情包,发张,来张,来一张",
+    "thinkingOff": true,
+    "maxTokens": 600,
+    "trimHeavyTools": true,
+    "nudge": true
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用减负",
+      "description": "关掉后恢复全功率运行；判定规则和已产生的设置都保留。"
+    },
+    "maxTriggerChars": {
+      "type": "number",
+      "label": "闲聊单条字数上限",
+      "description": "触发批里任何一条消息（去掉图片/表情占位后）超过这个字数，就不算闲聊、不减负。调大 = 更多消息被当闲聊（更省但更容易误伤）；默认 30。",
+      "min": 5,
+      "max": 200
+    },
+    "complexWords": {
+      "type": "string",
+      "label": "复杂信号词",
+      "description": "逗号分隔。触发批里任何一条命中其中任一个词，就按全功率跑（不算闲聊）。往里加词 = 更保守；删词 = 更激进。中文逗号或英文逗号都认。",
+      "multiline": true
+    },
+    "thinkingOff": {
+      "type": "boolean",
+      "label": "闲聊轮关闭深度思考",
+      "description": "判成闲聊的这一轮，显式下发「关闭思考」参数（按宿主方言表 GLM/DeepSeek/Qwen 等自动适配；拿不到方言表时静默跳过，不会瞎发参数）。"
+    },
+    "maxTokens": {
+      "type": "number",
+      "label": "闲聊轮输出上限",
+      "description": "闲聊轮写入 max_tokens 的上限，0 = 不限。只在「思考确认已关」或本来就没带思考参数时才压——思考还开着的请求不压，免得把思考模型的正文预算掐死。默认 600。",
+      "min": 0,
+      "max": 32000
+    },
+    "trimHeavyTools": {
+      "type": "boolean",
+      "label": "闲聊轮裁掉重工具",
+      "description": "把联网搜索、网页抓取、知识库、媒体理解这几类工具从这一轮的工具列表里移走——模型看不见就不会去调，少一轮工具调用就少一次模型往返。发送消息、表情、翻聊天记录、记忆这些轻工具全部保留。"
+    },
+    "nudge": {
+      "type": "boolean",
+      "label": "追加轻量化引导",
+      "description": "在本次输入末尾追加一行小提示：「这是日常闲聊，一两句话回完直接结束」。提示词层面少绕路，实测能明显减少闲聊轮里多余的收尾调用。"
+    }
+  }
+}

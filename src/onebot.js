@@ -115,7 +115,33 @@ export class OneBotClient {
   }
 
   /** OneBot HTTP API（发送与查询都走这里）。 */
-  async call(action, params = {}, timeoutMs = 15000) {
+  /**
+   * QQ 侧拒发时给一句人话。
+   * NapCat 在"消息被 QQ 挡回来"时只会甩 `EventChecker Failed: NTEvent ...`，
+   * 真实原因通常是**机器人被禁言**／被风控／内容重复，这里补一次自查。
+   */
+  async #explainSendFailure(action, params) {
+    if (!action.startsWith('send_')) return '';
+    const gid = params?.group_id;
+    if (gid != null) {
+      try {
+        const info = await this.call('get_group_member_info', {
+          group_id: Number(gid), user_id: Number(this.selfId), no_cache: true
+        }, 6000, { noExplain: true });
+        const until = Number(info?.shut_up_timestamp || 0) * 1000;
+        const nick = String(info?.card || info?.nickname || '机器人');
+        if (until > Date.now()) {
+          const t = new Date(until);
+          const pad = (n) => String(n).padStart(2, '0');
+          return `（${nick}在本群被禁言，到 ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())} 才能发言）`;
+        }
+        if (info) return '（没被禁言：可能是 QQ 风控或内容重复，换一句或稍后再发）';
+      } catch { /* 查不到就算了 */ }
+    }
+    return '（QQ 拒绝了这条消息，常见原因：被禁言 / 风控 / 内容重复）';
+  }
+
+  async call(action, params = {}, timeoutMs = 15000, { noExplain = false } = {}) {
     const res = await fetch(`${this.httpUrl}/${action}`, {
       method: 'POST',
       headers: {
@@ -133,7 +159,9 @@ export class OneBotClient {
     }
     const body = await res.json().catch(() => ({}));
     if (body.status !== 'ok' && body.retcode !== 0) {
-      throw new Error(`OneBot ${action} 失败: retcode=${body.retcode ?? body.status} ${body.wording ?? ''}`);
+      const wording = String(body.wording ?? body.message ?? '');
+      const hint = noExplain ? '' : await this.#explainSendFailure(action, params).catch(() => '');
+      throw new Error(`OneBot ${action} 失败: retcode=${body.retcode ?? body.status} ${wording}${hint}`);
     }
     return body.data;
   }

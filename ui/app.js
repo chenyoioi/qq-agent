@@ -1455,6 +1455,7 @@ async function refreshStatus() {
     const s = state.status;
     const dot = $('#onebot-dot');
     const label = $('#onebot-label');
+
     // ⚠️ 关键：WS 连着 ≠ 账号可用。NapCat 的 WS 在账号离线时依然在监听，
     // 只看 connected 会让"掉线"显示成"已连接"（2026-09-14 事故）。
     const acct = s.onebot.account || {};
@@ -1482,6 +1483,15 @@ async function refreshStatus() {
       const p2 = (n) => String(n).padStart(2, '0');
       const off = -d.getTimezoneOffset() / 60;
       tzEl.textContent = `北京时间 ${p2(d.getHours())}:${p2(d.getMinutes())}（UTC${off >= 0 ? '+' : ''}${off}）`;
+    }
+    // 最近有没有"发不出去"（禁言 / 风控 / 掉线）：状态条上补一句 + 悬浮看原因，
+    // 不然群友说"它不理我"时只能翻日志。
+    const issues = (Array.isArray(s.sendIssues) ? s.sendIssues : []).filter((x) => Date.now() - (x.at || 0) < 30 * 60 * 1000);
+    if (issues.length) {
+      label.textContent += ' · ⚠ 最近有消息没发出去';
+      label.title = issues.map((x) => `${new Date(x.at).toLocaleTimeString('zh-CN')} ${x.chatKey}：${x.reason}`).join('\n');
+    } else if (label.title) {
+      label.title = '';
     }
     state.paused = s.paused;
     state.pauseReason = s.pauseReason;

@@ -123,7 +123,15 @@ export function setup(api) {
 async function reply(ctx, text) {
   try {
     ctx?.sender?.allowRateBypass?.(ctx.chatKey, 5000);   // 命令类回复不被限流吞掉
-    if (typeof ctx?.sender?.sendTextBatch === 'function') await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+    if (typeof ctx?.sender?.sendTextBatch !== 'function') return;
+    try {
+      await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+    } catch (error) {
+      // 发送偶发被 QQ 挡回（风控抖动）：等一秒再试一次；禁言这类硬失败会在第二次照样抛
+      await new Promise((r) => setTimeout(r, 1200));
+      await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+      log(`重试后仍失败：${error?.message ?? error}`);
+    }
   } catch (error) { log(`商店回复失败：${error?.message ?? error}`); }
 }
 function markHandled(ctx) {

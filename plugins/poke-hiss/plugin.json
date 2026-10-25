@@ -1,0 +1,60 @@
+{
+  "id": "poke-hiss",
+  "name": "被拍多了会哈气",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "短时间内被拍一拍太多次，会炸毛发一句哈气。按时间窗口计数，台词随机且不连续重复。不经过模型，0 token。",
+  "author": "local",
+  "enabledByDefault": false,
+  "capabilities": [
+    "status.poke-hiss"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "groups": "",
+    "windowSec": 300,
+    "threshold": 3,
+    "cooldownSec": 60,
+    "checkIntervalSec": 3,
+    "hissTexts": ""
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用哈气",
+      "description": "总开关。关掉后不再数拍一拍、不再发声。"
+    },
+    "groups": {
+      "type": "string",
+      "label": "目标群号（逗号分隔）",
+      "description": "留空 = 跟随发送白名单里的所有群。填了群号 = 只盯这些群。"
+    },
+    "windowSec": {
+      "type": "number",
+      "label": "计数时间窗口（秒）",
+      "description": "只数最近这么多秒内的拍一拍，默认 300（5 分钟）。拍完这轮就重新计数。"
+    },
+    "threshold": {
+      "type": "number",
+      "label": "哈气阈值（几次）",
+      "description": "窗口内被拍几次就哈气，默认 3，最少 2。"
+    },
+    "cooldownSec": {
+      "type": "number",
+      "label": "哈气冷却（秒）",
+      "description": "两次哈气的最小间隔，默认 60，防止被刷屏式拍打时连续哈。"
+    },
+    "checkIntervalSec": {
+      "type": "number",
+      "label": "扫描间隔（秒）",
+      "description": "多久扫一轮消息存档，默认 3 秒。"
+    },
+    "hissTexts": {
+      "type": "string",
+      "label": "哈气台词（用 | 或英文逗号分隔）",
+      "description": "留空 = 用内置的 12 句（推荐）。想自定义就填，用竖线 | 或英文逗号分隔。"
+    }
+  }
+}

@@ -772,7 +772,9 @@ export function createApp({ log = console.log } = {}) {
       if (pathname === '/api/status' && method === 'GET') {
         const dayKey = todayKey();
         const usage = sessions.todayUsage(dayKey);
+        const sendIssues = typeof sender?.recentIssues === 'function' ? sender.recentIssues() : [];
         return json(res, 200, {
+          sendIssues,
           onebot: {
             connected: onebot.connected,
             everConnected: onebot.everConnected,
@@ -1895,6 +1897,23 @@ export function createApp({ log = console.log } = {}) {
       if (pathname === '/api/schedule-notify/status' && method === 'GET') {
         const offset = Number(url.searchParams.get('offset') ?? 1);
         return json(res, 200, { ok: true, status: scheduleNotify.status(), preview: scheduleNotify.preview(offset) });
+      }
+
+      // 发一条测试消息：验证"这个群现在能不能说话"（被禁言/风控时一看就知道）
+      if (pathname === '/api/send-test' && method === 'POST') {
+        const body = await readBody(req);
+        const chatKey = String(body?.chatKey || '').trim();
+        const text = String(body?.text || '自检：群消息发送正常').slice(0, 200);
+        const [kind, id] = chatKey.split(':');
+        if ((kind !== 'group' && kind !== 'private') || !/^\d+$/.test(id || '')) {
+          return json(res, 400, { error: 'chatKey 形如 group:123456' });
+        }
+        try {
+          const out = await sender.sendTextBatch(chatKey, text, {});
+          return json(res, 200, { ok: true, text, result: out });
+        } catch (error) {
+          return json(res, 502, { ok: false, error: String(error?.message ?? error) });
+        }
       }
 
       if (pathname === '/api/pause' && method === 'POST') {

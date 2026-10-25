@@ -36,6 +36,10 @@ export function stripToolMarkup(text) {
 }
 
 export class SendQueue {
+  /** 最近发送失败记录（新的在前），给控制台看"为什么不回复" */
+  issues = [];
+  recentIssues() { return this.issues.slice(0, 10); }
+
   constructor({ onebot, store, onSent = null }) {
     this.onebot = onebot;
     this.store = store;
@@ -192,6 +196,14 @@ export class SendQueue {
     for (const r of settled) {
       if (r.status === 'fulfilled') sent.push(r.value);
       else failed.push({ error: String(r.reason?.message ?? r.reason) });
+    }
+    if (failed.length > 0) {
+      // 记一笔"发不出去"的原因（禁言 / 风控 / 掉线），控制台能直接看到，
+      // 免得群友说"它不理我"时要翻 journalctl 才知道为什么。
+      for (const f of failed) {
+        this.issues.unshift({ at: Date.now(), chatKey: String(chatKey), reason: String(f.error).slice(0, 300) });
+      }
+      this.issues = this.issues.slice(0, 10);
     }
     if (sent.length === 0 && failed.length > 0) {
       const detail = failed.map((f) => f.error).join('；');

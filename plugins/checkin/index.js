@@ -68,7 +68,15 @@ async function reply(ctx, text) {
     // 确定性命令的回复不能被"每分钟 3 条"这类限流吞掉：开一个短豁免窗口
     // （群友连发几条别的消息时，签到回复仍发得出去）
     ctx?.sender?.allowRateBypass?.(ctx.chatKey, 5000);
-    if (typeof ctx?.sender?.sendTextBatch === 'function') await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+    if (typeof ctx?.sender?.sendTextBatch !== 'function') return;
+    try {
+      await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+    } catch (error) {
+      // 发送偶发被 QQ 挡回（风控抖动）：等一秒再试一次；禁言这类硬失败会在第二次照样抛
+      await new Promise((r) => setTimeout(r, 1200));
+      await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+      log(`重试后仍失败：${error?.message ?? error}`);
+    }
   } catch (error) {
     log(`签到回复失败：${error?.message ?? error}`);
   }
