@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>金币商店</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f7f8fa; --card:#fff; --line:#e3e6ec; --text:#1f2329; --muted:#6b7280; --accent:#2f6fed; --danger:#d33; --ok:#0f7a3d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#15171c; --card:#1d2027; --line:#2c313b; --text:#e6e8ec; --muted:#9aa3b2; --accent:#6ea0ff; --danger:#ff7b72; --ok:#4ac26b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:18px; font: 13px/1.55 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
+  h2 { font-size:15px; margin:0 0 10px; }
+  h3 { font-size:13px; margin:18px 0 8px; color: var(--muted); font-weight:600; }
+  .card { background: var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input, select, button, textarea { font: inherit; color: inherit; }
+  input, select, textarea { background: transparent; border:1px solid var(--line); border-radius:7px; padding:6px 9px; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+  button { background: var(--card); border:1px solid var(--line); border-radius:7px; padding:6px 12px; cursor:pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color:#fff; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  table { width:100%; border-collapse: collapse; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color: var(--muted); font-weight:600; font-size:12px; }
+  td input[type=number] { width:90px; }
+  .muted { color: var(--muted); }
+  .ok { color: var(--ok); }
+  .warn { color: var(--danger); }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .hint { font-size:12px; color: var(--muted); }
+  .pill { display:inline-block; padding:1px 7px; border:1px solid var(--line); border-radius:999px; font-size:11px; color: var(--muted); }
+  .pill.on { color: var(--ok); border-color: var(--ok); }
+  .pill.off { color: var(--danger); border-color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <h2>金币商店</h2>
+    <div class="row">
+      <label class="muted">群号</label>
+      <input id="chatId" placeholder="1062533151" style="width:140px" />
+      <button id="refresh">刷新</button>
+    </div>
+  </div>
+  <div class="hint" id="status">正在读取…</div>
+  <div class="row" style="margin-top:8px" id="stats"></div>
+</div>
+
+<h3>商品（改完记得保存，群里立刻生效）</h3>
+<div class="card">
+  <table>
+    <thead><tr><th>名称</th><th>价格</th><th>库存</th><th>说明</th><th>兑换文案</th><th>上架</th><th></th></tr></thead>
+    <tbody id="items"></tbody>
+  </table>
+  <div class="row" style="margin-top:10px">
+    <button id="addItem">＋ 新增商品</button>
+    <button id="resetItems">恢复默认商品</button>
+    <span class="hint">库存留空 = 不限量</span>
+  </div>
+</div>
+
+<h3>手动发币 / 扣币 / 转账（主人用）</h3>
+<div class="card">
+  <div class="grid2">
+    <div class="row"><label class="muted" style="width:60px">操作</label>
+      <select id="opKind">
+        <option value="credit">发金币</option>
+        <option value="debit">扣金币</option>
+        <option value="transfer">转账</option>
+        <option value="balance">查余额</option>
+      </select></div>
+    <div class="row"><label class="muted" style="width:60px">QQ</label><input id="opUser" placeholder="对方 QQ 号" style="flex:1" /></div>
+    <div class="row"><label class="muted" style="width:60px">金额</label><input id="opAmount" type="number" min="1" placeholder="正整数" style="flex:1" /></div>
+    <div class="row"><label class="muted" style="width:60px">收款人</label><input id="opTo" placeholder="仅转账时填" style="flex:1" /></div>
+    <div class="row" style="grid-column:1/-1"><label class="muted" style="width:60px">原因</label><input id="opReason" placeholder="面板手动操作" style="flex:1" /></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="primary" id="opRun">执行</button>
+    <button id="rankBtn">看财富榜</button>
+    <span id="opResult" class="hint"></span>
+  </div>
+</div>
+
+<h3>最近订单</h3>
+<div class="card">
+  <table>
+    <thead><tr><th>时间</th><th>群友</th><th>商品</th><th>数量</th><th>金额</th><th>状态</th></tr></thead>
+    <tbody id="orders"></tbody>
+  </table>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const CHAT_KEY = 'shop-panel-chat';
+let items = [];
+
+function scope() {
+  const id = String($('#chatId').value || '').replace(/\D/g, '');
+  return id ? `group:${id}` : '';
+}
+
+async function call(action, payload = {}) {
+  const r = await fetch('/api/plugin-ui/shop/action', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action, payload: { scope: scope(), ...payload } })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+function renderItems() {
+  $('#items').innerHTML = items.map((it, i) => `
+    <tr data-i="${i}">
+      <td><input data-f="name" value="${esc(it.name)}" style="width:120px" /></td>
+      <td><input data-f="price" type="number" min="1" value="${esc(it.price)}" style="width:90px" /></td>
+      <td><input data-f="stock" type="number" min="0" value="${it.stock === null || it.stock === undefined ? '' : esc(it.stock)}" placeholder="不限" style="width:80px" /></td>
+      <td><input data-f="desc" value="${esc(it.desc || '')}" style="width:180px" /></td>
+      <td><input data-f="deliver" value="${esc(it.deliver || '')}" style="width:180px" /></td>
+      <td><input data-f="enabled" type="checkbox" ${it.enabled !== false ? 'checked' : ''} /></td>
+      <td class="row" style="gap:6px">
+        <button data-act="save">保存</button>
+        <button data-act="del" class="danger">删除</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">还没有商品，点下面「新增商品」</td></tr>';
+}
+
+function renderOrders(list) {
+  $('#orders').innerHTML = list.map((o) => `
+    <tr>
+      <td class="muted">${new Date(o.createdAt || 0).toLocaleString('zh-CN')}</td>
+      <td>${esc(o.userId)}</td>
+      <td>${esc(o.itemName)}</td>
+      <td>${esc(o.count)}</td>
+      <td>${esc(o.amount)}</td>
+      <td class="${o.status === 'paid' ? 'ok' : 'warn'}">${esc(o.status)}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">还没有订单</td></tr>';
+}
+
+async function refresh() {
+  try {
+    const data = await call('overview');
+    items = data.items || [];
+    renderItems();
+    renderOrders(data.orders || []);
+    const s = data.stats || {};
+    $('#stats').innerHTML = `
+      <span class="pill">商品 ${s.itemCount ?? 0}</span>
+      <span class="pill">订单 ${s.orderCount ?? 0}</span>
+      <span class="pill on">已付款 ${s.paidCount ?? 0}</span>
+      <span class="pill ${s.unsettled ? 'off' : ''}">待处理 ${s.unsettled ?? 0}</span>
+      <span class="pill">累计收入 ${s.income ?? 0}</span>
+      <span class="pill ${s.currencyAvailable ? 'on' : 'off'}">货币 ${s.currencyAvailable ? '可用' : '未授权/未启用'}</span>`;
+    $('#status').textContent = s.currencyAvailable
+      ? '已连接货币系统。改商品后群里立刻生效。'
+      : '货币系统不可用：检查 currency 插件是否启用、是否给 shop 授权 reserve/capture/release。';
+  } catch (e) {
+    $('#status').innerHTML = `<span class="warn">读取失败：${esc(e.message)}</span>`;
+  }
+}
+
+$('#items').addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const tr = btn.closest('tr');
+  const i = Number(tr.dataset.i);
+  const base = items[i];
+  if (btn.dataset.act === 'del') {
+    if (!confirm(`删除商品「${base.name}」？`)) return;
+    await call('delete-item', { id: base.id });
+    await refresh();
+    return;
+  }
+  const get = (f) => tr.querySelector(`[data-f="${f}"]`);
+  const stockRaw = get('stock').value.trim();
+  const item = {
+    id: base.id,
+    name: get('name').value.trim(),
+    price: Number(get('price').value),
+    stock: stockRaw === '' ? null : Number(stockRaw),
+    desc: get('desc').value,
+    deliver: get('deliver').value,
+    enabled: get('enabled').checked
+  };
+  const r = await call('save-item', { item });
+  if (!r.ok) { alert('保存失败：' + (r.error || '')); return; }
+  await refresh();
+});
+
+$('#addItem').addEventListener('click', async () => {
+  const name = prompt('商品名称');
+  if (!name) return;
+  const price = Number(prompt('价格（金币，正整数）', '50'));
+  if (!Number.isSafeInteger(price) || price <= 0) { alert('价格要正整数'); return; }
+  const stockRaw = prompt('库存（留空 = 不限量）', '');
+  const item = { name, price, stock: stockRaw.trim() === '' ? null : Number(stockRaw), desc: '', deliver: '', enabled: true };
+  const r = await call('save-item', { item });
+  if (!r.ok) { alert('新增失败：' + (r.error || '')); return; }
+  await refresh();
+});
+
+$('#resetItems').addEventListener('click', async () => {
+  if (!confirm('恢复成默认的 4 个商品？现有商品会被覆盖。')) return;
+  await call('reset-items');
+  await refresh();
+});
+
+$('#opRun').addEventListener('click', async () => {
+  const out = $('#opResult');
+  out.textContent = '执行中…';
+  out.className = 'hint';
+  try {
+    const r = await call('adjust', {
+      op: $('#opKind').value,
+      userId: $('#opUser').value.trim(),
+      amount: Number($('#opAmount').value || 0),
+      toUserId: $('#opTo').value.trim(),
+      reason: $('#opReason').value.trim() || '面板手动操作'
+    });
+    if (!r.ok) {
+      out.textContent = '失败：' + (r.error || r.message || r.code || '未知错误');
+      out.className = 'warn';
+      return;
+    }
+    const bal = r.balance ?? r.receipt?.entries?.[0]?.balance ?? null;
+    out.textContent = `成功${bal !== null ? `，当前余额 ${bal}` : ''}${r.receipt ? `（流水 #${r.receipt.sequence}）` : ''}`;
+    out.className = 'ok';
+    await refresh();
+  } catch (e) {
+    out.textContent = '失败：' + e.message;
+    out.className = 'warn';
+  }
+});
+
+$('#rankBtn').addEventListener('click', async () => {
+  const out = $('#opResult');
+  try {
+    const r = await call('rank');
+    if (!r.ok) { out.textContent = '失败：' + (r.error || ''); out.className = 'warn'; return; }
+    out.textContent = (r.accounts || []).slice(0, 10).map((a, i) => `${i + 1}. ${a.userId} ${a.balance}`).join('  ·  ') || '还没有人有余额';
+    out.className = 'hint';
+  } catch (e) {
+    out.textContent = '失败：' + e.message;
+    out.className = 'warn';
+  }
+});
+
+$('#refresh').addEventListener('click', () => { localStorage.setItem(CHAT_KEY, $('#chatId').value.trim()); refresh(); });
+$('#chatId').addEventListener('change', () => localStorage.setItem(CHAT_KEY, $('#chatId').value.trim()));
+$('#chatId').value = localStorage.getItem(CHAT_KEY) || '';
+refresh();
+</script>
+</body>
+</html>

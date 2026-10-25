@@ -286,7 +286,11 @@ refs:
     replyPolicy: { enabled: false },
     sticker: { enabled: true, collectEnabled: true },
     store: { maxMessagesPerChat: 0, pastStateLimit: 80, pastStateMaxChars: 6000, keepSessionFiles: 100 },
-    server: { port: await freePort(), token: '' }
+    server: { port: await freePort(), token: '' },
+    // 扩展全部关掉（上面的 skillsOff）：审计只测核心行为。
+    // 不写这一行的话，下面这份 cfg 会把之前的 skillsOff 覆盖掉，插件照常加载，
+    // 于是「随机插话/裁重工具」这类行为会让断言偶发失败。
+    skills: skillsOff
   };
   fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify(cfg));
 

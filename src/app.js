@@ -1918,6 +1918,33 @@ export function createApp({ log = console.log } = {}) {
         }
       }
 
+    // 扩展面板清单：plugins/<id>/ui/panel.json → [{ id, title, entry }]
+    // 控制台据此自动挂页签（以前插件只能去改 ui/index.html 塞 tab，一升级就被覆盖）
+    if (pathname === '/api/plugin-panels' && req.method === 'GET') {
+      const panels = [];
+      for (const type of ['plugins', 'skills']) {
+        let dirs = [];
+        try { dirs = fs.readdirSync(path.join(ROOT, type), { withFileTypes: true }).filter((d) => d.isDirectory()); } catch { continue; }
+        for (const d of dirs) {
+          const file = path.join(ROOT, type, d.name, 'ui', 'panel.json');
+          try {
+            const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (!raw || typeof raw !== 'object') continue;
+            const id = String(raw.id || d.name);
+            panels.push({
+              id,
+              title: String(raw.title || d.name).slice(0, 30),
+              entry: String(raw.entry || 'index.html'),
+              dir: type,
+              // 插件可能被停用：面板照样能看，但标注状态
+              enabled: skillManager.isActive(id, {}).active
+            });
+          } catch { /* 没有 panel.json 或格式不对就跳过 */ }
+        }
+      }
+      return json(res, 200, { panels });
+    }
+
       return json(res, 404, { error: `未知 API：${method} ${pathname}` });
     }
 

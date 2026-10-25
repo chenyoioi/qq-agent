@@ -1347,6 +1347,55 @@ function switchTab(name) {
   if (name === 'snowluma') loadSnowlumaPage();
   if (name === 'skills') loadSkillsPage();
   if (name === 'settings') loadSettings();
+  if (name.startsWith('panel-')) ensurePanelLoaded(name.slice('panel-'.length));
+}
+
+// ── 扩展自带的控制台页签 ─────────────────────────────────────────────
+// 扩展在自己目录里放 ui/panel.json（{id,title,entry}），控制台就会多一个页签，
+// 内容是 /plugin-ui/<id>/<entry>。以前插件只能去改 ui/index.html 塞 tab，一升级就被覆盖。
+const panelFrames = new Map();   // id -> iframe
+
+function ensurePanelLoaded(id) {
+  const frame = panelFrames.get(id);
+  if (frame && !frame.src) frame.src = frame.dataset.src;
+}
+
+async function loadPluginPanels() {
+  let panels = [];
+  try {
+    const r = await api('/api/plugin-panels');
+    panels = r.panels || [];
+  } catch {
+    return;
+  }
+  const tabs = $('#tabs');
+  const layout = $('#layout');
+  if (!tabs || !layout) return;
+  for (const p of panels) {
+    const tabId = `panel-${p.id}`;
+    if (panelFrames.has(p.id)) continue;
+    const btn = document.createElement('button');
+    btn.className = 'tab';
+    btn.dataset.tab = tabId;
+    btn.textContent = p.title;
+    if (p.enabled === false) {
+      btn.title = '扩展当前已停用，面板只能查看';
+      btn.textContent = `${p.title}·停用`;
+    }
+    tabs.appendChild(btn);
+
+    const section = document.createElement('section');
+    section.className = 'view';
+    section.id = `view-${tabId}`;
+    const frame = document.createElement('iframe');
+    frame.className = 'plugin-panel-frame';
+    frame.dataset.src = `/plugin-ui/${encodeURIComponent(p.id)}/${encodeURIComponent(p.entry)}`;
+    frame.title = p.title;
+    frame.loading = 'lazy';
+    section.appendChild(frame);
+    layout.appendChild(section);
+    panelFrames.set(p.id, frame);
+  }
 }
 
 // ── 状态栏 ──
@@ -4103,20 +4152,11 @@ async function saveConfig({ quiet = false } = {}) {
   return data;
 }
 
-// ── 标签页切换 ──
-$$('.tab').forEach((tab) => {
-  tab.addEventListener('click', () => {
-    $$('.tab').forEach((t) => t.classList.remove('active'));
-    tab.classList.add('active');
-    $$('.view').forEach((v) => v.classList.remove('active'));
-    $(`#view-${tab.dataset.tab}`).classList.add('active');
-    state.tab = tab.dataset.tab;
-    if (state.tab === 'sessions') loadSessions();
-    if (state.tab === 'chats') loadChats();
-    if (state.tab === 'snowluma') loadSnowlumaPage();
-    if (state.tab === 'skills') loadSkillsPage();
-    if (state.tab === 'settings') loadSettings();
-  });
+// ── 标签页切换（事件委托：扩展动态加的页签也能用）──
+document.addEventListener('click', (ev) => {
+  const tab = ev.target.closest('.tab');
+  if (!tab || !tab.dataset.tab) return;
+  switchTab(tab.dataset.tab);
 });
 
 // ── 启动 ──
@@ -4140,5 +4180,6 @@ $$('.tab').forEach((tab) => {
   refreshStatus();
   setInterval(refreshStatus, 15000);
   connectSSE();
+  loadPluginPanels();   // 扩展自带页签（金币商店、签到榜…）
   loadSessions();
 })();

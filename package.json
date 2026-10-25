@@ -1,6 +1,6 @@
 {
   "name": "qq-agent",
-  "version": "1.1.38",
+  "version": "1.1.39",
   "private": true,
   "description": "Standalone QQ agent desktop app: event-driven stateless agent runs over an OpenAI-compatible API, with a session-style UI. Decoupled from DeepSeek Harness.",
   "type": "module",
@@ -12,7 +12,7 @@
     "start": "electron .",
     "server": "node src/server.js",
     "lint:account": "node test/lint-account-check.mjs",
-    "test": "node test/lint-account-check.mjs && node test/selftest.mjs && node test/skills.test.mjs && node test/quota-gate.test.mjs && node test/reply-policy.test.mjs && node test/recall.test.mjs && node test/master-command.test.mjs && node test/master-absolute.test.mjs && node test/providers.test.mjs",
+    "test": "node test/lint-account-check.mjs && node test/selftest.mjs && node test/skills.test.mjs && node test/quota-gate.test.mjs && node test/reply-policy.test.mjs && node test/recall.test.mjs && node test/master-command.test.mjs && node test/master-absolute.test.mjs && node test/providers.test.mjs && node test/economy-plugins.test.mjs",
     "test:prompt": "node test/test-prompt.mjs",
     "migrate:export": "node scripts/migrate.mjs export",
     "migrate:import": "node scripts/migrate.mjs import"
