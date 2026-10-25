@@ -122,6 +122,7 @@ export function setup(api) {
 
 async function reply(ctx, text) {
   try {
+    ctx?.sender?.allowRateBypass?.(ctx.chatKey, 5000);   // 命令类回复不被限流吞掉
     if (typeof ctx?.sender?.sendTextBatch === 'function') await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
   } catch (error) { log(`商店回复失败：${error?.message ?? error}`); }
 }

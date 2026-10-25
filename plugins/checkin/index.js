@@ -65,6 +65,9 @@ export function setup(api) {
 
 async function reply(ctx, text) {
   try {
+    // 确定性命令的回复不能被"每分钟 3 条"这类限流吞掉：开一个短豁免窗口
+    // （群友连发几条别的消息时，签到回复仍发得出去）
+    ctx?.sender?.allowRateBypass?.(ctx.chatKey, 5000);
     if (typeof ctx?.sender?.sendTextBatch === 'function') await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
   } catch (error) {
     log(`签到回复失败：${error?.message ?? error}`);
