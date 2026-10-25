@@ -58,10 +58,7 @@
 <!-- 商店 -->
 <div class="pane on" id="pane-shop">
   <div class="card">
-    <table>
-      <thead><tr><th>名称</th><th>价格</th><th>库存</th><th>说明</th><th>兑换文案</th><th>上架</th><th></th></tr></thead>
-      <tbody id="items"></tbody>
-    </table>
+    <div id="items" class="items"></div>
     <div class="row" style="margin-top:10px">
       <button id="addItem">＋ 新增商品</button>
       <button id="resetItems">恢复默认商品</button>
@@ -125,15 +122,19 @@ async function call(action, payload = {}) {
 
 function renderItems() {
   $('#items').innerHTML = items.map((it, i) => `
-    <tr data-i="${i}">
-      <td><input data-f="name" value="${esc(it.name)}" style="width:110px" /></td>
-      <td><input data-f="price" type="number" min="1" value="${esc(it.price)}" style="width:80px" /></td>
-      <td><input data-f="stock" type="number" min="0" value="${it.stock === null || it.stock === undefined ? '' : esc(it.stock)}" placeholder="不限" style="width:70px" /></td>
-      <td><input data-f="desc" value="${esc(it.desc || '')}" style="width:170px" /></td>
-      <td><input data-f="deliver" value="${esc(it.deliver || '')}" style="width:170px" /></td>
-      <td><input data-f="enabled" type="checkbox" ${it.enabled !== false ? 'checked' : ''} /></td>
-      <td class="row" style="gap:6px"><button data-act="save">保存</button><button data-act="del" class="danger">删除</button></td>
-    </tr>`).join('') || '<tr><td colspan="7" class="muted">还没有商品，点下面「新增商品」</td></tr>';
+    <div class="item" data-i="${i}">
+      <div class="row item-head">
+        <input data-f="name" class="item-name" value="${esc(it.name)}" placeholder="商品名" />
+        <span class="row" style="gap:4px"><input data-f="price" type="number" min="1" value="${esc(it.price)}" style="width:84px" /><span class="muted">金币</span></span>
+        <span class="row" style="gap:4px"><span class="muted">库存</span><input data-f="stock" type="number" min="0" value="${it.stock === null || it.stock === undefined ? '' : esc(it.stock)}" placeholder="不限" style="width:80px" /></span>
+        <label class="row" style="gap:4px"><input data-f="enabled" type="checkbox" ${it.enabled !== false ? 'checked' : ''} /><span class="muted">上架</span></label>
+        <span style="flex:1"></span>
+        <button data-act="save" class="primary">保存</button>
+        <button data-act="del" class="danger">删除</button>
+      </div>
+      <div class="row item-line"><span class="muted" style="width:56px">说明</span><input data-f="desc" value="${esc(it.desc || '')}" placeholder="群里列清单时会显示这句" style="flex:1" /></div>
+      <div class="row item-line"><span class="muted" style="width:56px">兑换文案</span><input data-f="deliver" value="${esc(it.deliver || '')}" placeholder="兑换成功后告诉对方怎么做" style="flex:1" /></div>
+    </div>`).join('') || '<div class="muted" style="padding:8px">还没有商品，点下面「新增商品」</div>';
 }
 
 async function loadShop() {
@@ -173,7 +174,7 @@ async function loadRp() {
 $('#items').addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
-  const tr = btn.closest('tr');
+  const tr = btn.closest('.item');
   const base = items[Number(tr.dataset.i)];
   if (btn.dataset.act === 'del') {
     if (!confirm(`删除商品「${base.name}」？`)) return;
@@ -190,6 +191,7 @@ $('#items').addEventListener('click', async (ev) => {
   } });
   if (!r.ok) { alert('保存失败：' + (r.error || '')); return; }
   await loadShop();
+  $('#status').textContent = `已保存「${item.name}」，群里立刻按新价格算`;
 });
 
 $('#addItem').addEventListener('click', async () => {
@@ -276,3 +278,12 @@ initChat().then(boot);
 </script>
 </body>
 </html>
+
+<!-- 商品卡片样式 -->
+<style>
+  .items { display:flex; flex-direction:column; gap:10px; }
+  .item { border:1px solid var(--line); border-radius:9px; padding:10px 12px; background:var(--surface-sunken, transparent); }
+  .item-head { gap:8px; }
+  .item-name { width:150px; font-weight:600; }
+  .item-line { margin-top:6px; gap:6px; }
+</style>

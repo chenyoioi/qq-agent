@@ -47,6 +47,14 @@ function readSettings() {
   };
 }
 
+/** 货币单位名：跟货币插件的 info() 走，拿不到就「金币」。 */
+function currencyUnit() {
+  try {
+    const info = money()?.info?.();
+    return (info && info.currencyName) ? String(info.currencyName) : '金币';
+  } catch { return '金币'; }
+}
+
 function money() {
   const api = hostApi?.capability?.('currency.v1', { consumer: 'shop' });
   return api && api.apiVersion === 1 ? api : null;
@@ -122,11 +130,28 @@ export function register(api) {
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     async execute() {
       const items = loadItems().filter((it) => it.enabled !== false);
+      const s = readSettings();
+      const unit = currencyUnit();
+      // 直接给一段"可以原样发出去"的清单：一行一个商品，带说明和单位。
+      // 以前只回 JSON，模型会自己压缩成「点歌券50 表情包券20」——没单位、没说明，
+      // 而且改价后它还会复用上一轮的说法。
+      const lines = items.map((it) => {
+        const price = `${it.price} ${unit}`;
+        const stock = it.stock === null || it.stock === undefined ? '' : (Number(it.stock) > 0 ? `（剩 ${it.stock}）` : '（已售罄）');
+        const desc = it.desc ? ` —— ${it.desc}` : '';
+        return `${it.name} · ${price}${stock}${desc}`;
+      });
+      const text = items.length ? lines.join('\n') : '商店现在是空的';
       return {
         content: JSON.stringify({
           ok: true,
-          items: items.map((it) => ({ id: it.id, name: it.name, price: it.price, stock: it.stock, desc: it.desc })),
-          note: '用 send_message 简短列出（别把全部细节念完），有人要买让他说「兑换 XX」。'
+          unit,
+          items: items.map((it) => ({ id: it.id, name: it.name, price: it.price, unit, stock: it.stock, desc: it.desc })),
+          text,
+          notice: s.deliverNotice,
+          note: '把 text 原样作为一条 send_message 发出去（一行一个商品，保留说明与「金币」单位）。'
+            + '不要压缩成一行、不要改成「名字+数字」、不要说「刚发过/往上翻」。'
+            + '有人要买就让他说「兑换 XX」。'
         })
       };
     }
