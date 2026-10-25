@@ -1347,13 +1347,17 @@ function switchTab(name) {
   if (name === 'snowluma') loadSnowlumaPage();
   if (name === 'skills') loadSkillsPage();
   if (name === 'settings') loadSettings();
-  if (name.startsWith('panel-')) ensurePanelLoaded(name.slice('panel-'.length));
+  if (name.startsWith('panel-')) {
+    const firstPlugin = panelTabs.get(name);
+    if (firstPlugin) ensurePanelLoaded(firstPlugin);
+  }
 }
 
 // ── 扩展自带的控制台页签 ─────────────────────────────────────────────
 // 扩展在自己目录里放 ui/panel.json（{id,title,entry}），控制台就会多一个页签，
 // 内容是 /plugin-ui/<id>/<entry>。以前插件只能去改 ui/index.html 塞 tab，一升级就被覆盖。
-const panelFrames = new Map();   // id -> iframe
+const panelFrames = new Map();   // 插件 id -> iframe
+const panelTabs = new Map();     // 页签 id -> 第一个插件 id（切页时按需加载它的 iframe）
 
 function ensurePanelLoaded(id) {
   const frame = panelFrames.get(id);
@@ -1371,30 +1375,74 @@ async function loadPluginPanels() {
   const tabs = $('#tabs');
   const layout = $('#layout');
   if (!tabs || !layout) return;
+  // 按 group 归并：同一组的插件共用一个页签，页签内再用子页切换
+  const groups = new Map();
   for (const p of panels) {
-    const tabId = `panel-${p.id}`;
-    if (panelFrames.has(p.id)) continue;
+    const key = p.group || `__id__${p.id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+
+  for (const [key, list] of groups) {
+    const isGroup = !key.startsWith('__id__');
+    const tabId = isGroup ? `panel-group-${key}` : `panel-${list[0].id}`;
+    if (panelTabs.has(tabId)) continue;
+
     const btn = document.createElement('button');
     btn.className = 'tab';
     btn.dataset.tab = tabId;
-    btn.textContent = p.title;
-    if (p.enabled === false) {
-      btn.title = '扩展当前已停用，面板只能查看';
-      btn.textContent = `${p.title}·停用`;
-    }
+    btn.textContent = isGroup ? key : list[0].title;
+    const allOff = list.every((x) => x.enabled === false);
+    if (allOff) btn.textContent += '·停用';
     tabs.appendChild(btn);
 
     const section = document.createElement('section');
     section.className = 'view';
     section.id = `view-${tabId}`;
-    const frame = document.createElement('iframe');
-    frame.className = 'plugin-panel-frame';
-    frame.dataset.src = `/plugin-ui/${encodeURIComponent(p.id)}/${encodeURIComponent(p.entry)}`;
-    frame.title = p.title;
-    frame.loading = 'lazy';
-    section.appendChild(frame);
+
+    const makeFrame = (p) => {
+      const frame = document.createElement('iframe');
+      frame.className = 'plugin-panel-frame';
+      frame.dataset.src = `/plugin-ui/${encodeURIComponent(p.id)}/${encodeURIComponent(p.entry)}`;
+      frame.title = p.title;
+      frame.loading = 'lazy';
+      panelFrames.set(p.id, frame);
+      return frame;
+    };
+
+    if (list.length === 1) {
+      section.appendChild(makeFrame(list[0]));
+    } else {
+      // 多个插件合成一页：顶部子页签
+      const bar = document.createElement('div');
+      bar.className = 'panel-subtabs';
+      const stack = document.createElement('div');
+      stack.className = 'panel-stack';
+      list.forEach((p, i) => {
+        const sub = document.createElement('button');
+        sub.className = `panel-subtab${i === 0 ? ' on' : ''}`;
+        sub.dataset.panel = p.id;
+        sub.textContent = p.enabled === false ? `${p.title}·停用` : p.title;
+        bar.appendChild(sub);
+        const frame = makeFrame(p);
+        frame.classList.toggle('on', i === 0);
+        stack.appendChild(frame);
+      });
+      bar.addEventListener('click', (ev) => {
+        const sub = ev.target.closest('.panel-subtab');
+        if (!sub) return;
+        bar.querySelectorAll('.panel-subtab').forEach((b) => b.classList.toggle('on', b === sub));
+        stack.querySelectorAll('iframe').forEach((f) => {
+          f.classList.toggle('on', f === panelFrames.get(sub.dataset.panel));
+        });
+        ensurePanelLoaded(sub.dataset.panel);
+      });
+      section.appendChild(bar);
+      section.appendChild(stack);
+    }
+
     layout.appendChild(section);
-    panelFrames.set(p.id, frame);
+    panelTabs.set(tabId, list[0].id);   // 切到这个页签时先加载第一个子页
   }
 }
 

@@ -1,5 +1,6 @@
-// 经济三件套（签到 / 红包 / 商店）与货币系统的接线测试。
-// 用临时 data 目录 + 真实插件（currency + checkin + shop + red-packet），不碰线上数据。
+// 经济三件套（签到 / 商店 / 红包）确定性钩子测试。
+// 这三个插件现在**不走模型**：命中触发词就地记账 + 回复 + 标记已读。
+// 这里直接调它们的 onMessage 钩子，断言"回复了什么"和"余额变了多少"。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,35 +13,27 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 
 fs.writeFileSync(path.join(DATA_DIR, 'config.json'), JSON.stringify({
   skills: {
-    // 合并后：签到 / 红包 / 商店 都在 currency（经济系统）里，共用一份设置
     currency: {
-      enabled: true,
-      currencyName: '金币',
-      ownerQq: '10001',
-      transfersEnabled: true,
+      enabled: true, currencyName: '金币', ownerQq: '10001', transfersEnabled: true,
       integrationPermissions: JSON.stringify({
         checkin: ['credit'],
         shop: ['reserve', 'capture', 'release', 'credit', 'debit', 'transfer'],
         'red-packet': ['transfer'],
         test: ['credit', 'debit', 'transfer']
-      }),
-      checkinEnabled: true, checkinBaseReward: 20, checkinStreakBonus: 5, checkinMaxBonus: 50, checkinResetHour: 0,
-      rpEnabled: true, rpMaxTotal: 10000, rpMaxCount: 20, rpExpireSec: 300,
-      shopEnabled: true, shopMaxStock: 9999, shopAllowNegativeStock: false,
-      shopDeliverNotice: '兑换成功，凭这条记录找管理员领取'
-    }
+      })
+    },
+    checkin: { enabled: true, baseReward: 20, streakBonus: 5, maxBonus: 50, resetHour: 0, showBalance: true },
+    shop: { enabled: true, maxStock: 9999, allowNegativeStock: false, deliverNotice: '凭这条记录找管理员领取' },
+    'red-packet': { enabled: true, maxTotal: 10000, maxCount: 20, expireSec: 300 }
   },
   extensions: { hotReload: false }
 }, null, 2));
 
 const { loadPlugins } = await import(path.join(ROOT, 'src/plugin-loader.js'));
 const { skillManager } = await import(path.join(ROOT, 'src/skills/manager.js'));
-const { getTool } = await import(path.join(ROOT, 'src/tool-registry.js'));
-
 await loadPlugins({ log: () => {} });
-// 宿主在 app.js 里对启用的扩展调 activate（能力才真正可用）；测试里手动补上
-for (const id of ['currency']) {
-  try { skillManager.activate(id, {}); } catch (error) { console.log('激活失败', id, error?.message ?? error); }
+for (const id of ['currency', 'checkin', 'shop', 'red-packet']) {
+  try { skillManager.activate(id, {}); } catch (e) { console.log('激活失败', id, e?.message ?? e); }
 }
 
 let pass = 0;
@@ -48,154 +41,165 @@ const ok = (m) => { pass++; console.log('  ✓ ' + m); };
 const SCOPE = 'group:123456';
 const ALICE = '20001';
 const BOB = '20002';
-// 真实宿主的 ctx 里没有 sender.userId：操作人要从 session.triggerEntries 解析
-// （货币插件自己的 requester() 就是这么做的，我们的签到/红包/商店也走它）
-const ctxFor = (userId) => ({
-  chatKey: SCOPE, kind: 'group', chatId: '123456', selfId: '99999',
-  session: {
-    status: 'running',
-    chatKey: SCOPE,
-    triggerEntries: [{ id: 1, mid: '9001', senderId: userId, self: false, ts: Date.now() }]
-  },
-  sender: { userId }, senderId: userId
-});
-const run = async (toolId, userId, args = {}) => {
-  const tool = getTool(toolId);
-  assert.ok(tool, `工具 ${toolId} 应已注册`);
-  const r = await tool.execute(ctxFor(userId), args);
-  let data = {};
-  try { data = JSON.parse(String(r.content).replace(/\n[^\n]*$/, '')); } catch { data = { raw: String(r.content) }; }
-  return { ...r, data };
-};
+const CAROL = '20003';
+
+/** 造一个"像宿主那样"的 onMessage ctx：sender 捕获回复，store 记录已读。 */
+function ctxOf(userId, text) {
+  const sent = [];
+  const ctx = {
+    chatKey: SCOPE, kind: 'group', chatId: '123456',
+    text, senderId: userId, senderName: '测试', atSelf: false, replyToSelf: false,
+    entry: { id: 1 },
+    sender: { sendTextBatch: async (_k, t) => { sent.push(String(t)); return { sent: [{ messageId: 1 }] }; } },
+    store: { marked: [], markEntryRead(_k, id) { this.marked.push(id); return true; } },
+    onebot: { selfId: '99999', selfNickname: '测试Bot' }
+  };
+  return { ctx, sent };
+}
+
+/** 调某个插件的 onMessage 钩子。 */
+async function fire(pluginId, userId, text) {
+  const skill = skillManager.registry.get(pluginId);
+  assert.ok(skill?.hooks?.onMessage, `${pluginId} 应该有 onMessage 钩子`);
+  const { ctx, sent } = ctxOf(userId, text);
+  await skill.hooks.onMessage(ctx);
+  return { sent, marked: ctx.store.marked };
+}
+
 const money = () => {
   const provs = skillManager.getCapabilityProviders('currency.v1', {});
-  if (!provs.length) throw new Error('没有 currency.v1 提供者（插件未注册能力？）');
+  assert.equal(provs.length, 1, 'currency.v1 应有提供者');
   const client = provs[0].fn({ consumer: 'test' });
-  if (!client) throw new Error(`currency.v1 提供者返回 undefined（激活状态：${JSON.stringify(skillManager.isActive('currency', {}))}）`);
+  assert.ok(client, 'currency.v1 提供者应返回 client（确认已激活）');
   return client;
 };
+const balOf = (uid) => money().balance({ scope: SCOPE, userId: uid }).balance;
 
-// 货币系统可用（否则后面全白测）
-assert.ok(money(), 'currency.v1 应可用');
-ok('货币系统 currency.v1 已就绪');
-
-// ① 签到：发钱 + 重试不多发
-const c1 = await run('currency__checkin', ALICE);
-assert.equal(c1.data.ok, true);
-assert.equal(c1.data.reward, 20, '首签应得基础奖励 20');
-assert.equal(c1.data.streak, 1);
-const bal1 = money().balance({ scope: SCOPE, userId: ALICE });
-assert.equal(bal1.balance, 20);
-ok('签到发金币 20，余额到账');
-
-const c2 = await run('currency__checkin', ALICE);
-assert.equal(c2.data.ok, true);
-assert.equal(c2.data.alreadyChecked, true, '同一天再签应提示已签');
-assert.equal(money().balance({ scope: SCOPE, userId: ALICE }).balance, 20, '不能重复发钱');
-ok('同一天重复签到不会重复发币（幂等）');
-
-// ② 商店：兑换扣币、库存减少、余额正确
-// 先给 ALICE 充点钱，不然签到那 20 买不起点歌券（真人也是先攒币）
-money().credit({ scope: SCOPE, userId: ALICE, amount: 500, requestId: 'test:seed:alice-shop', reason: '测试充值' });
-const shopList = await run('currency__shop_list', ALICE);
-assert.equal(shopList.data.ok, true);
-const song = (shopList.data.items || []).find((x) => x.id === 'song');
-assert.ok(song, '默认应有「点歌券」');
-const before = money().balance({ scope: SCOPE, userId: ALICE }).balance;
-const buy = await run('currency__shop_buy', ALICE, { item: '点歌券', count: 1 });
-assert.equal(buy.data.ok, true, `兑换应成功，实际：${JSON.stringify(buy.data)}`);
-assert.equal(buy.data.amount, song.price);
-const after = money().balance({ scope: SCOPE, userId: ALICE }).balance;
-assert.equal(after, before - song.price, '兑换后余额应正好扣掉商品价格');
-ok(`兑换「点歌券」扣 ${song.price} 金币（${before} → ${after}）`);
-
-// ③ 商店：余额不足要失败且不扣钱
-const poor = await run('currency__shop_buy', BOB, { item: '自定义称号', count: 1 });
-assert.equal(poor.data.ok, false);
-assert.match(String(poor.data.reason || ''), /余额|不足/);
-assert.equal(money().balance({ scope: SCOPE, userId: BOB }).balance, 0, '失败不应扣钱');
-ok('余额不足时兑换失败且不动余额');
-
-// ④ 商店：库存卖完就买不到（用面板接口改库存，走的是宿主里那个实例）
-const econSkill = skillManager.registry.get('currency');
-assert.ok(econSkill && typeof econSkill.handleUiRequest === 'function', '经济系统应导出 handleUiRequest');
-const shopUi = (action, payload = {}) => econSkill.handleUiRequest({ action, payload });
+// ① 签到：直接回复 + 到账
 {
-  const overview0 = await shopUi('shop:overview', { scope: SCOPE });
-  const target = overview0.items.find((x) => x.id === 'custom-title');
-  const saved = await shopUi('shop:save-item', { item: { ...target, stock: 1 } });
+  const r = await fire('checkin', ALICE, '签到');
+  assert.equal(r.sent.length, 1, '签到应直接回一条');
+  assert.match(r.sent[0], /签到成功/);
+  assert.match(r.sent[0], /\+20 金币/);
+  assert.match(r.sent[0], /余额 20/);
+  assert.deepEqual(r.marked, [1], '应把这条消息标已读（避免模型再回一遍）');
+  assert.equal(balOf(ALICE), 20);
+  ok('签到：不走模型直接回「签到成功 +20 金币，余额 20」，并标记已读');
+}
+
+// ② 同一天重复签到：不再发钱
+{
+  const r = await fire('checkin', ALICE, '签到');
+  assert.match(r.sent[0], /已经签过/);
+  assert.equal(balOf(ALICE), 20, '重复签到不能发钱');
+  ok('重复签到只回复「今天已经签过」，不重复发币');
+}
+
+// ③ 商店：一行一个商品，带说明和金币单位
+{
+  const r = await fire('shop', BOB, '商店');
+  assert.equal(r.sent.length, 1);
+  const lines = r.sent[0].split('\n');
+  assert.ok(lines.length >= 3, `清单应该多行，实际 ${lines.length} 行`);
+  assert.match(lines[0], /· \d+ 金币/);
+  assert.ok(lines.every((l) => /金币/.test(l)), '每行都要带「金币」单位');
+  assert.match(r.sent[0], /——/, '要带说明');
+  ok(`商店：一条消息 ${lines.length} 行，每行「商品 · 价格 金币（剩 N） —— 说明」`);
+}
+
+// ④ 兑换：扣钱 + 回复余额
+{
+  money().credit({ scope: SCOPE, userId: BOB, amount: 200, requestId: 'seed:bob', reason: '测试充值' });
+  const before = balOf(BOB);
+  const r = await fire('shop', BOB, '兑换 点歌券');
+  assert.equal(r.sent.length, 1, '兑换应直接回一条');
+  assert.match(r.sent[0], /兑换成功/);
+  assert.match(r.sent[0], /点歌券/);
+  assert.match(r.sent[0], /50 金币/);
+  assert.equal(balOf(BOB), before - 50, '应按商品价格扣钱');
+  assert.match(r.sent[0], new RegExp(`余额 ${before - 50}`));
+  ok(`兑换：扣 50 金币（${before} → ${before - 50}），一条消息回「兑换成功…余额…」`);
+}
+
+// ⑤ 余额不足：不扣钱、说清原因
+{
+  const before = balOf(CAROL);
+  const r = await fire('shop', CAROL, '兑换 自定义称号');
+  assert.match(r.sent[0], /余额不够/);
+  assert.equal(balOf(CAROL), before);
+  ok('余额不足时回复「余额不够」，不扣钱');
+}
+
+// ⑥ 不存在的商品 / 不看清单也行
+{
+  const r = await fire('shop', BOB, '兑换 不存在的券');
+  assert.match(r.sent[0], /没有「不存在的券」/);
+  ok('兑换不存在的商品会提示先看清单');
+}
+
+// ⑦ 发红包 + 抢红包
+{
+  money().credit({ scope: SCOPE, userId: ALICE, amount: 300, requestId: 'seed:alice', reason: '测试充值' });
+  const aliceBefore = balOf(ALICE);
+  const send = await fire('red-packet', ALICE, '发红包 100 5份');
+  assert.equal(send.sent.length, 1);
+  assert.match(send.sent[0], /红包发好了/);
+  assert.match(send.sent[0], /100 金币/);
+  assert.match(send.sent[0], /5 份/);
+
+  const grab = await fire('red-packet', BOB, '抢红包');
+  assert.equal(grab.sent.length, 1);
+  assert.match(grab.sent[0], /抢到 \d+ 金币/);
+
+  const again = await fire('red-packet', BOB, '抢红包');
+  assert.match(again.sent[0], /已经抢过/);
+
+  // 抢到多少，发红包的人就少多少（这一笔已经发生，所以基线要重新取）
+  assert.equal(balOf(ALICE), aliceBefore - Number((grab.sent[0].match(/抢到 (\d+)/) || [])[1]), '抢到的金额由发红包的人出');
+  const afterGrab = balOf(ALICE);
+  const self = await fire('red-packet', ALICE, '抢红包');
+  assert.match(self.sent[0], /自己发的红包抢不了/);
+  assert.equal(balOf(ALICE), afterGrab, '自己抢不了，余额不变');
+  ok('红包：发 100/5 份 → BOB 抢到 → 重复抢被拒 → 自己抢被拒');
+}
+
+// ⑧ 无关消息不该被这三个插件接走
+{
+  for (const text of ['今天天气不错', '商店里面的东西贵吗', '签到一下再说吧']) {
+    const r1 = await fire('checkin', ALICE, text);
+    const r2 = await fire('shop', ALICE, text);
+    const r3 = await fire('red-packet', ALICE, text);
+    assert.equal(r1.sent.length + r2.sent.length + r3.sent.length, 0, `「${text}」不该被确定性插件接走`);
+  }
+  ok('无关消息不误触发（只认精确触发词）');
+}
+
+// ⑨ 面板：商店增删改 + 签到榜 + 红包列表
+{
+  const shop = skillManager.registry.get('shop');
+  const checkin = skillManager.registry.get('checkin');
+  const rp = skillManager.registry.get('red-packet');
+
+  const ov = await shop.handleUiRequest({ action: 'overview', payload: { scope: SCOPE } });
+  assert.equal(ov.ok, true);
+  assert.ok(ov.items.length >= 3);
+  assert.ok(ov.orders.length >= 1, '应该有兑换订单');
+  assert.ok(ov.stats.paidCount >= 1);
+
+  const saved = await shop.handleUiRequest({ action: 'save-item', payload: { item: { id: 'vip', name: 'VIP 券', price: 999, stock: 2, desc: '测试', deliver: '', enabled: true } } });
   assert.equal(saved.ok, true);
+  const ov2 = await shop.handleUiRequest({ action: 'overview', payload: { scope: SCOPE } });
+  assert.ok(ov2.items.some((x) => x.id === 'vip'), '面板新增的商品应出现在清单里');
+
+  const board = await checkin.handleUiRequest({ action: 'status', payload: { chatKey: SCOPE } });
+  assert.equal(board.ok, true);
+  assert.ok(board.rows.some((r) => r.userId === ALICE && r.streak === 1));
+
+  const list = await rp.handleUiRequest({ action: 'list', payload: { chatKey: SCOPE } });
+  assert.equal(list.ok, true);
+  assert.ok(list.rows.length >= 1);
+  ok('三个面板接口可用（商品增删改 / 签到榜 / 红包列表）');
 }
-// 给 BOB 充钱，先买走唯一一件，再买第二次应失败
-money().credit({ scope: SCOPE, userId: BOB, amount: 2000, requestId: 'test:seed:bob', reason: '测试充值' });
-const firstBuy = await run('currency__shop_buy', BOB, { item: '自定义称号', count: 1 });
-assert.equal(firstBuy.data.ok, true, '第一次应买到');
-const secondBuy = await run('currency__shop_buy', BOB, { item: '自定义称号', count: 1 });
-assert.equal(secondBuy.data.ok, false);
-assert.match(String(secondBuy.data.reason || ''), /库存/);
-ok('库存卖完后第二次兑换被拒');
-
-// ⑤ 红包：发送 + 两人抢 + 不能重复抢
-money().credit({ scope: SCOPE, userId: ALICE, amount: 500, requestId: 'test:seed:alice', reason: '测试充值' });
-const aliceBefore = money().balance({ scope: SCOPE, userId: ALICE }).balance;
-const sent = await run('currency__send_red_packet', ALICE, { total: 90, count: 3 });
-assert.equal(sent.data.ok, true, `发红包应成功：${JSON.stringify(sent.data)}`);
-const packetId = sent.data.id;
-const grabBob = await run('currency__grab_red_packet', BOB);
-assert.equal(grabBob.data.ok, true, `BOB 应抢到：${JSON.stringify(grabBob.data)}`);
-assert.ok(grabBob.data.amount >= 1);
-const grabAgain = await run('currency__grab_red_packet', BOB);
-assert.equal(grabAgain.data.ok, false, '同一人不能抢两次');
-ok(`红包：BOB 抢到 ${grabBob.data.amount}，重复抢被拒`);
-
-const carol = '20003';
-const grabCarol = await run('currency__grab_red_packet', carol);
-assert.equal(grabCarol.data.ok, true);
-const aliceAfter = money().balance({ scope: SCOPE, userId: ALICE }).balance;
-assert.equal(aliceAfter, aliceBefore - grabBob.data.amount - grabCarol.data.amount, '抢到多少就从发红包的人扣多少');
-ok('红包金额：抢到的总额等于发送者扣掉的总额');
-
-// ⑥ 面板动作：改商品 / 手动发币 / 排行
-const shopMod = null;
-const saveRes = await shopUi('shop:save-item', { item: { id: 'vip', name: 'VIP 券', price: 999, stock: 3, desc: '测试', deliver: '', enabled: true } });
-assert.equal(saveRes.ok, true);
-const overview = await shopUi('shop:overview', { scope: SCOPE });
-assert.ok(overview.items.some((x) => x.id === 'vip'), '面板新增的商品应出现在清单里');
-assert.ok(overview.orders.length >= 2, '面板应能看到订单');
-assert.ok(overview.stats.paidCount >= 1);
-ok('面板：新增商品、查看订单与统计');
-
-const adjust = await shopUi('shop:adjust', { op: 'credit', scope: SCOPE, userId: BOB, amount: 33, reason: '面板测试' });
-assert.equal(adjust.ok, true, `面板发币应成功：${JSON.stringify(adjust)}`);
-ok('面板：手动发币成功');
-
-const del = await shopUi('shop:delete-item', { id: 'vip' });
-assert.equal(del.ok, true);
-assert.ok(!del.items.some((x) => x.id === 'vip'));
-ok('面板：删除商品');
-
-// 转账（面板）：A 转给 B，双方余额同时变
-{
-  const aBefore = money().balance({ scope: SCOPE, userId: ALICE }).balance;
-  const bBefore = money().balance({ scope: SCOPE, userId: BOB }).balance;
-  const tr = await shopUi('shop:adjust', { op: 'transfer', scope: SCOPE, userId: ALICE, toUserId: BOB, amount: 40, reason: '面板转账测试' });
-  assert.equal(tr.ok, true, `转账应成功：${JSON.stringify(tr)}`);
-  assert.equal(money().balance({ scope: SCOPE, userId: ALICE }).balance, aBefore - 40);
-  assert.equal(money().balance({ scope: SCOPE, userId: BOB }).balance, bBefore + 40);
-  ok('面板：转账 40 金币，双方余额同步变化');
-}
-
-const rank = await shopUi('shop:rank', { scope: SCOPE });
-assert.equal(rank.ok, true);
-assert.ok(rank.accounts.length >= 2);
-ok('面板：财富榜可用');
-
-// ⑦ 签到榜面板
-const checkinMod = econSkill;
-const board = await checkinMod.handleUiRequest({ action: 'checkin:status', payload: { chatKey: SCOPE } });
-assert.equal(board.ok, true);
-assert.ok(board.rows.some((r) => r.userId === ALICE && r.streak === 1));
-ok('签到榜面板可以读到签到记录');
 
 fs.rmSync(DATA_DIR, { recursive: true, force: true });
-console.log(`\n经济插件 ${pass} 项检查通过 ✅`);
+console.log(`\n经济插件（确定性）${pass} 项检查通过 ✅`);

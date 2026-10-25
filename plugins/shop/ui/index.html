@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>经济系统</title>
+<title>金币商店</title>
 <style>
   :root { color-scheme: light dark; --bg:#f7f8fa; --card:#fff; --line:#e3e6ec; --text:#1f2329; --muted:#6b7280; --accent:#2f6fed; --danger:#d33; --ok:#0f7a3d; }
   @media (prefers-color-scheme: dark) { :root { --bg:#15171c; --card:#1d2027; --line:#2c313b; --text:#e6e8ec; --muted:#9aa3b2; --accent:#6ea0ff; --danger:#ff7b72; --ok:#4ac26b; } }
@@ -33,7 +33,7 @@
 </head>
 <body>
 <div class="row" style="justify-content:space-between;margin-bottom:10px">
-  <h2>经济系统</h2>
+  <h2>金币商店</h2>
   <div class="row">
     <label class="muted">群</label>
     <select id="chatSel" style="max-width:220px"></select>
@@ -50,8 +50,6 @@
 
 <div class="tabs">
   <button data-pane="shop" class="on">商店</button>
-  <button data-pane="checkin">签到榜</button>
-  <button data-pane="rp">红包</button>
   <button data-pane="money">发币 / 转账</button>
 </div>
 
@@ -68,22 +66,6 @@
   <div class="card">
     <div class="row" style="justify-content:space-between"><strong>最近订单</strong><span class="hint">状态 paid=已扣款，settle-failed=已交付但结算失败（需人工看）</span></div>
     <table><thead><tr><th>时间</th><th>群友</th><th>商品</th><th>数量</th><th>金额</th><th>状态</th></tr></thead><tbody id="orders"></tbody></table>
-  </div>
-</div>
-
-<!-- 签到 -->
-<div class="pane" id="pane-checkin">
-  <div class="card">
-    <div class="row" style="justify-content:space-between"><strong>签到榜</strong><span class="hint" id="checkinStatus"></span></div>
-    <table><thead><tr><th>QQ</th><th>连签天数</th><th>最后签到</th><th>累计签到金币</th></tr></thead><tbody id="checkinRows"></tbody></table>
-  </div>
-</div>
-
-<!-- 红包 -->
-<div class="pane" id="pane-rp">
-  <div class="card">
-    <div class="row" style="justify-content:space-between"><strong>本群红包</strong><span class="hint">抢到才转账，剩下的本来就在发送者账上</span></div>
-    <table><thead><tr><th>红包</th><th>发送者</th><th>总额/份数</th><th>已抢</th><th>状态</th></tr></thead><tbody id="rpRows"></tbody></table>
   </div>
 </div>
 
@@ -111,7 +93,7 @@ let items = [];
 const scope = () => { const id = String($('#chatId').value || '').replace(/\D/g, ''); return id ? `group:${id}` : ''; };
 
 async function call(action, payload = {}) {
-  const r = await fetch('/api/plugin-ui/currency/action', {
+  const r = await fetch('/api/plugin-ui/shop/action', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ action, payload: { scope: scope(), ...payload } })
   });
@@ -138,7 +120,7 @@ function renderItems() {
 }
 
 async function loadShop() {
-  const d = await call('shop:overview');
+  const d = await call('overview');
   if (!d.ok) { $('#status').innerHTML = `<span class="warn">${esc(d.error)}</span>`; return; }
   items = d.items || [];
   renderItems();
@@ -153,24 +135,6 @@ async function loadShop() {
   $('#status').textContent = '改商品后群里立刻生效。';
 }
 
-async function loadCheckin() {
-  const d = await call('checkin:status', { chatKey: scope() });
-  if (!d.ok) { $('#checkinStatus').textContent = d.error || '读取失败'; return; }
-  $('#checkinRows').innerHTML = (d.rows || []).map((x) => `
-    <tr><td>${esc(x.userId)}</td><td>${esc(x.streak)}</td><td class="muted">${esc(x.lastDate)}</td><td>${esc(x.total)}</td></tr>`).join('')
-    || '<tr><td colspan="4" class="muted">还没有人签到</td></tr>';
-  $('#checkinStatus').textContent = `业务日 ${d.today} · ${(d.rows || []).length} 人签过`;
-}
-
-async function loadRp() {
-  const d = await call('rp:list', { chatKey: scope() });
-  if (!d.ok) { $('#rpRows').innerHTML = `<tr><td colspan="5" class="warn">${esc(d.error)}</td></tr>`; return; }
-  $('#rpRows').innerHTML = (d.rows || []).map((r) => `
-    <tr><td class="muted">${esc(r.id)}</td><td>${esc(r.senderId)}</td><td>${esc(r.claimedAmount)}/${esc(r.total)} · ${esc(r.claimedCount)}/${esc(r.count)}</td>
-    <td>${esc(r.claimedCount)}</td><td class="${r.status === 'open' ? 'ok' : 'muted'}">${esc(r.status === 'open' && r.expiresAt && r.expiresAt < Date.now() ? 'expired' : r.status)}</td></tr>`).join('')
-    || '<tr><td colspan="5" class="muted">本群还没有红包</td></tr>';
-}
-
 $('#items').addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button[data-act]');
   if (!btn) return;
@@ -178,13 +142,13 @@ $('#items').addEventListener('click', async (ev) => {
   const base = items[Number(tr.dataset.i)];
   if (btn.dataset.act === 'del') {
     if (!confirm(`删除商品「${base.name}」？`)) return;
-    await call('shop:delete-item', { id: base.id });
+    await call('delete-item', { id: base.id });
     await loadShop();
     return;
   }
   const get = (f) => tr.querySelector(`[data-f="${f}"]`);
   const stockRaw = get('stock').value.trim();
-  const r = await call('shop:save-item', { item: {
+  const r = await call('save-item', { item: {
     id: base.id, name: get('name').value.trim(), price: Number(get('price').value),
     stock: stockRaw === '' ? null : Number(stockRaw), desc: get('desc').value,
     deliver: get('deliver').value, enabled: get('enabled').checked
@@ -199,21 +163,21 @@ $('#addItem').addEventListener('click', async () => {
   const price = Number(prompt('价格（金币，正整数）', '50'));
   if (!Number.isSafeInteger(price) || price <= 0) { alert('价格要正整数'); return; }
   const stockRaw = prompt('库存（留空 = 不限量）', '');
-  const r = await call('shop:save-item', { item: { name, price, stock: stockRaw.trim() === '' ? null : Number(stockRaw), desc: '', deliver: '', enabled: true } });
+  const r = await call('save-item', { item: { name, price, stock: stockRaw.trim() === '' ? null : Number(stockRaw), desc: '', deliver: '', enabled: true } });
   if (!r.ok) { alert('新增失败：' + (r.error || '')); return; }
   await loadShop();
 });
 
 $('#resetItems').addEventListener('click', async () => {
   if (!confirm('恢复成默认 4 个商品？现有商品会被覆盖。')) return;
-  await call('shop:reset-items');
+  await call('reset-items');
   await loadShop();
 });
 
 $('#opRun').addEventListener('click', async () => {
   const out = $('#opResult'); out.textContent = '执行中…'; out.className = 'hint';
   try {
-    const r = await call('shop:adjust', { op: $('#opKind').value, userId: $('#opUser').value.trim(),
+    const r = await call('adjust', { op: $('#opKind').value, userId: $('#opUser').value.trim(),
       amount: Number($('#opAmount').value || 0), toUserId: $('#opTo').value.trim(),
       reason: $('#opReason').value.trim() || '面板手动操作' });
     if (!r.ok) { out.textContent = '失败：' + (r.error || r.message || r.code || ''); out.className = 'warn'; return; }
@@ -227,7 +191,7 @@ $('#opRun').addEventListener('click', async () => {
 $('#rankBtn').addEventListener('click', async () => {
   const out = $('#opResult');
   try {
-    const r = await call('shop:rank');
+    const r = await call('rank');
     out.textContent = r.ok ? ((r.accounts || []).slice(0, 10).map((a, i) => `${i + 1}. ${a.userId} ${a.balance}`).join('  ·  ') || '还没有人有余额') : '失败：' + (r.error || '');
     out.className = r.ok ? 'hint' : 'warn';
   } catch (e) { out.textContent = '失败：' + e.message; out.className = 'warn'; }
@@ -236,8 +200,6 @@ $('#rankBtn').addEventListener('click', async () => {
 document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
   document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
   document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('on', p.id === `pane-${b.dataset.pane}`));
-  if (b.dataset.pane === 'checkin') loadCheckin();
-  if (b.dataset.pane === 'rp') loadRp();
 }));
 
 $('#refresh').addEventListener('click', () => { localStorage.setItem(CHAT_KEY, $('#chatId').value.trim()); boot(); });
@@ -269,9 +231,6 @@ async function boot() {
   $('#chatSel').value = String($('#chatId').value || '').trim();
   try {
     await loadShop();
-    // 另外两个分页有数据也顺带刷一下（切换时也会再刷）
-    loadCheckin().catch(() => {});
-    loadRp().catch(() => {});
   } catch (e) { $('#status').innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
 }
 initChat().then(boot);

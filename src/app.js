@@ -628,6 +628,7 @@ export function createApp({ log = console.log } = {}) {
         replyToSelf,
         entry: incoming,
         sender,
+        store,   // 命中确定性指令的插件用它 markEntryRead，避免模型再处理一遍
         onebot: { selfId, selfNickname: onebot.selfNickname }
       })).catch((error) => log('[skill] onMessage 钩子失败：' + (error?.message ?? error)));
     } catch (error) {
@@ -1935,6 +1936,8 @@ export function createApp({ log = console.log } = {}) {
               id,
               title: String(raw.title || d.name).slice(0, 30),
               entry: String(raw.entry || 'index.html'),
+              // group：同一个 group 的多个面板会被控制台合成一个页签（内部再分子页）
+              group: String(raw.group || '').slice(0, 30),
               dir: type,
               // 插件可能被停用：面板照样能看，但标注状态
               enabled: skillManager.isActive(id, {}).active

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>群红包</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f7f8fa; --card:#fff; --line:#e3e6ec; --text:#1f2329; --muted:#6b7280; --ok:#0f7a3d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#15171c; --card:#1d2027; --line:#2c313b; --text:#e6e8ec; --muted:#9aa3b2; --ok:#4ac26b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; font:13px/1.55 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background:var(--bg); color:var(--text); }
+  h2 { font-size:15px; margin:0 0 10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input, select, button { font:inherit; color:inherit; background:transparent; border:1px solid var(--line); border-radius:7px; padding:6px 9px; }
+  button { cursor:pointer; } button:hover { border-color: var(--accent, #2f6fed); }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-size:12px; }
+  .muted { color:var(--muted); } .ok { color:var(--ok); }
+  .pill { display:inline-block; padding:1px 7px; border:1px solid var(--line); border-radius:999px; font-size:11px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <h2>本群红包</h2>
+    <div class="row">
+      <select id="chatSel" style="max-width:200px"></select>
+      <input id="chatId" placeholder="手动填群号" style="width:130px" />
+      <button id="refresh">刷新</button>
+    </div>
+  </div>
+  <div class="muted" id="status">正在读取…</div>
+  <table>
+    <thead><tr><th>红包</th><th>发送者</th><th>总额 / 份数</th><th>已抢</th><th>状态</th><th>发出时间</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="muted" style="margin-top:8px">抢到才转账：没抢完或过期的份额一直留在发红包的人账上。</div>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const KEY = 'rp-panel-chat';
+const scope = () => { const id = String($('#chatId').value || '').replace(/\D/g, ''); return id ? `group:${id}` : ''; };
+
+async function call(action, payload = {}) {
+  const r = await fetch('/api/plugin-ui/red-packet/action', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action, payload: { chatKey: scope(), ...payload } })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+async function refresh() {
+  if (!scope()) { $('#status').textContent = '先选择或填写群号'; return; }
+  try {
+    const d = await call('list');
+    if (!d.ok) { $('#status').textContent = '读取失败：' + (d.error || ''); return; }
+    $('#rows').innerHTML = (d.rows || []).map((r) => `
+      <tr>
+        <td class="muted">${esc(r.id)}</td>
+        <td>${esc(r.senderId)}</td>
+        <td>${esc(r.claimedAmount)}/${esc(r.total)} ${esc(r.unit || '金币')} · ${esc(r.claimedCount)}/${esc(r.count)} 份</td>
+        <td>${esc(r.claimedCount)}</td>
+        <td class="${r.status === 'open' ? 'ok' : 'muted'}">${esc(r.status)}</td>
+        <td class="muted">${new Date(r.createdAt || 0).toLocaleString('zh-CN')}</td>
+      </tr>`).join('') || '<tr><td colspan="6" class="muted">本群还没有红包</td></tr>';
+    $('#status').textContent = `共 ${(d.rows || []).length} 个红包`;
+  } catch (e) { $('#status').textContent = '读取失败：' + e.message; }
+}
+
+async function initChat() {
+  const saved = localStorage.getItem(KEY) || '';
+  let groups = [];
+  try { const cfg = await (await fetch('/api/config')).json(); groups = (cfg.allow?.groups || []).filter(Boolean); } catch {}
+  $('#chatSel').innerHTML = ['<option value="">（选择群）</option>'].concat(groups.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`)).join('');
+  if (saved) $('#chatId').value = saved; else if (groups.length) $('#chatId').value = groups[0];
+  if (groups.includes($('#chatId').value)) $('#chatSel').value = $('#chatId').value;
+  localStorage.setItem(KEY, $('#chatId').value.trim());
+}
+
+$('#refresh').addEventListener('click', () => { localStorage.setItem(KEY, $('#chatId').value.trim()); refresh(); });
+$('#chatSel').addEventListener('change', () => { if ($('#chatSel').value) { $('#chatId').value = $('#chatSel').value; localStorage.setItem(KEY, $('#chatSel').value); refresh(); } });
+$('#chatId').addEventListener('change', () => { localStorage.setItem(KEY, $('#chatId').value.trim()); refresh(); });
+initChat().then(refresh);
+</script>
+</body>
+</html>

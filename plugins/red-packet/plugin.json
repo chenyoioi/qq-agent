@@ -1,0 +1,22 @@
+{
+  "id": "red-packet",
+  "name": "群红包",
+  "version": "2.0.0",
+  "apiVersion": 1,
+  "category": "economy",
+  "description": "群里说「发红包 100 5份」就发，「抢红包」就领。完全不走模型：命中即结算（0 token、秒回）。抢到那一刻才转账，所以没抢完/过期的份额一直留在发红包的人账上，不需要预扣也不会有冻结死账。",
+  "author": "qq-agent",
+  "enabledByDefault": true,
+  "permissions": [],
+  "requires": ["currency.v1"],
+  "settings": {
+    "maxTotal": 10000,
+    "maxCount": 20,
+    "expireSec": 300
+  },
+  "configSchema": {
+    "maxTotal": { "type": "number", "group": "红包", "label": "单个红包金额上限", "description": "默认 10000。" },
+    "maxCount": { "type": "number", "group": "红包", "label": "单个红包份数上限", "description": "默认 20。" },
+    "expireSec": { "type": "number", "group": "红包", "label": "多久没抢完作废（秒）", "description": "默认 300 秒；作废不影响钱（抢到才转账）。" }
+  }
+}

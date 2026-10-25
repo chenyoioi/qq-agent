@@ -1,7 +1,4 @@
 import { createStorage, defaultDataDirectory } from './lib/storage.js';
-import { register as registerCheckin, ui as checkinUi } from './lib/checkin.js';
-import { register as registerRedPacket, ui as redPacketUi } from './lib/red-packet.js';
-import { register as registerShop, ui as shopUi } from './lib/shop.js';
 import { createService } from './lib/service.js';
 import { registerTools } from './lib/tools.js';
 import { fail, settings } from './lib/validation.js';
@@ -21,11 +18,6 @@ export function createCurrencyPlugin({ directory, io, now = Date.now } = {}) {
     setup(api) {
       hostApi = api;
       registerTools(api, { service, readSettings, epoch: () => epoch, now });
-      // 经济系统的三块业务（签到 / 红包 / 商店）与货币同属一个插件：
-      // 同一个设置页、同一张卡片、同一个面板，不再分四个插件各管一份配置。
-      registerCheckin(api);
-      registerRedPacket(api);
-      registerShop(api);
     },
     activate() {
       if (running) return;
@@ -52,17 +44,3 @@ export function createCurrencyPlugin({ directory, io, now = Date.now } = {}) {
 
 const plugin = createCurrencyPlugin();
 export const { setup, activate, deactivate, dispose, available, providers } = plugin;
-
-/**
- * 控制台面板的统一入口（宿主读模块导出的 handleUiRequest）。
- * 面板动作按区域前缀分发：shop:* / checkin:* / rp:*，货币自身的查询走 shop 面板里的调账区。
- */
-export async function handleUiRequest({ action, payload } = {}) {
-  const name = String(action || '');
-  const [area, ...rest] = name.split(':');
-  const sub = rest.join(':');
-  if (area === 'shop') return shopUi({ action: sub, payload });
-  if (area === 'checkin') return checkinUi({ action: sub, payload });
-  if (area === 'rp') return redPacketUi({ action: sub === 'list' ? 'list' : sub, payload });
-  return { ok: false, error: `未知面板动作：${name}` };
-}
