@@ -1801,7 +1801,10 @@ export function createApp({ log = console.log } = {}) {
         try {
           const body = await readBody(req).catch(() => ({}));
           const workDir = String(body.workDir ?? '').trim();
-          const chatKey = String(body.chatKey ?? 'private:123456789').trim();
+          // 没指定会话就发给真主人（别落到 123456789 这种占位号）
+          const fallbackMaster = String(getConfig().persona?.masterQQ || '').trim();
+          const chatKey = String(body.chatKey ?? (fallbackMaster ? `private:${fallbackMaster}` : '')).trim();
+          if (!chatKey) return json(res, 400, { ok: false, error: '没配置主人 QQ，必须显式传 chatKey' });
           if (!workDir) return json(res, 400, { ok: false, error: 'workDir 必填' });
           const fsmod = await import('node:fs');
           const pathmod = await import('node:path');

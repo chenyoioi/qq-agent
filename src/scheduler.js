@@ -3,7 +3,8 @@
 // 防打扰：主人没回复时顺延；主人离线过久顺延到下一窗口。
 import { getConfig } from './config.js';
 
-const MASTER = '123456789';
+/** 主人 QQ：跟着配置走（以前写死 123456789，主动推送会发到一个不存在的会话） */
+function masterQq() { return String(getConfig().persona?.masterQQ || '').trim(); }
 
 // 窗口解析：['8-9','12-14','20-22'] → [{start:{h:8,m:0}, end:{h:9,m:0}}]
 function parseWindows(list) {
@@ -65,7 +66,9 @@ export class PushScheduler {
     // 1) 距上次推送 < 30 分钟不重复
     if (Date.now() - this.lastPushAt < 30 * 60 * 1000) return;
     // 2) 主人离线太久（最后消息 > 12h）不推
-    const meta = this.store.getChatMeta(`private:${MASTER}`);
+    const master = masterQq();
+    if (!master) return;
+    const meta = this.store.getChatMeta(`private:${master}`);
     if (meta?.lastTs && Date.now() - meta.lastTs > 12 * 3600 * 1000) return;
     // 3) 主人上一条还没回（距主人最后发言时间超过 6h 且距上次推送 > 5h，且主人没再说话）→ 等主人先开口
     if (meta?.lastTs) {
@@ -85,7 +88,7 @@ export class PushScheduler {
     this.todayPushed.add(today);
     this.lastPushAt = Date.now();
     this.log(`[push] 触发定时学习推送（${nowStr}）`);
-    await this.orchestrator.wake(`private:${MASTER}`, { proactive: true, pushTask: { source: 'scheduler' } })
+    await this.orchestrator.wake(`private:${master}`, { proactive: true, pushTask: { source: 'scheduler' } })
       .catch((e) => this.log('[push] wake 出错:', e?.message || e));
   }
 
@@ -95,7 +98,9 @@ export class PushScheduler {
     if (Date.now() - this.lastPushAt < 10 * 1000) return '距上次推送太近，稍后再试';
     this.lastPushAt = Date.now();
     this.todayPushed.add(today);
-    await this.orchestrator.wake(`private:${MASTER}`, { proactive: true, pushTask: { source: 'manual' } })
+    const master = masterQq();
+    if (!master) return '没有配置主人 QQ，无法推送';
+    await this.orchestrator.wake(`private:${master}`, { proactive: true, pushTask: { source: 'manual' } })
       .catch((e) => console.error('[push] pushNow 出错:', e?.message || e));
     return '已触发一次主动推送';
   }

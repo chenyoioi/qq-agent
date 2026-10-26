@@ -609,9 +609,12 @@ export class Orchestrator {
     // 工具集过滤：唯一口径 —— 全部交给 getToolAvailability()，
     // 内置工具与 Skill 工具一视同仁（Skill 开关 / 能力依赖 / vision / 搜索 / 分类都在里面判）。
     // 主人专属与学习模式是这套分支特有的身份规则，留在这里做二次筛选。
-    const MASTER_QQ = String(getConfig().persona?.masterQQ || '123456789');
-    const triggerSender = (triggerEntries[0] && (triggerEntries[0].senderId || '')) || '';
-    const isMaster = kind === 'private' ? String(chatId) === MASTER_QQ : String(triggerSender) === MASTER_QQ;
+    const MASTER_QQ = String(getConfig().persona?.masterQQ || '');
+    // ⚠️ 一批里可能有好几个人说话：主人不是第一个也必须算主人，
+    // 否则"群里主人 + 别人同时发言"时主人专属工具会被误拒。
+    const isMaster = kind === 'private'
+      ? String(chatId) === MASTER_QQ
+      : !!MASTER_QQ && triggerEntries.some((m) => String(m?.senderId ?? '') === MASTER_QQ);
     const availability = new Map();
     const toolDefs = buildToolDefs().filter((d) => {
       const id = d.id || d.name;
