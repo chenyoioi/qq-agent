@@ -17,6 +17,7 @@ import { getToolAvailability } from './tool-registry.js';
 import { skillManager } from './skills/manager.js';
 import { looksLikeMonologue, looksSpokenToUser } from './monologue-guard.js';
 import { modelVisionVerdict } from './vision-scan.js';
+import { recordToolUse, recentlyUsedNames, recordedNames } from './tool-usage.js';
 
 /**
  * 去重护栏：判断这段文本是否已在本会话发出过（归一化后比较）。
@@ -319,6 +320,17 @@ export class Orchestrator {
         if (await this.masterCommandHandler(runKey, triggerEntries)) return;
       } catch (error) {
         console.error('[orchestrator] 主人指令处理失败:', error?.message ?? error);
+      }
+    }
+
+    // ② 噪声批直接跳过：整批都是"没字的图/表情"、又没人 @/引用我、也不是主人发的
+    //    —— 这类批模型 99% 会判定沉默，白烧 ~31k token（审计里 36% 的运行都是这种）。
+    //    消息已经 drain（已读），这里 return 就是零成本跳过。
+    if (!proactive && triggerEntries.length && getConfig().wake?.skipNoiseBatches !== false) {
+      if (isNoiseBatch(triggerEntries)) {
+        this.emit('log', { text: `[噪声批] 跳过 ${runKey}（${triggerEntries.length} 条纯图/表情，无 @ 无引用）` });
+        this.emit('chat-update', runKey);
+        return;
       }
     }
 
@@ -633,6 +645,30 @@ export class Orchestrator {
       if (KB_TOOL_NAMES.has(id) && ident.mode !== 'tutor') return false;
       return true;
     });
+
+    // 工具瘦身（leanMode）：N 天没用过的工具不再下发给模型。默认保留核心通讯/记忆工具，
+    // 免得模型连"回消息"都做不到。随时把 leanMode 关掉就恢复全量。
+    const leanCfg = cfg.tools?.leanMode === true;
+    if (leanCfg) {
+      const days = Math.max(1, Number(cfg.tools?.leanDays) || 30);
+      const used = recentlyUsedNames(days);
+      const known = recordedNames();   // 有记录但太旧 → 收；从没记录过 → 保留（没数据不等于没用）
+      const keep = new Set((cfg.tools?.keepAlways || ['send_message', 'finish', 'send_sticker', 'send_image', 'get_recent_messages', 'get_message_detail', 'memory_query', 'memory_write', 'receive_file']).map(String));
+      const before = toolDefs.length;
+      const kept = toolDefs.filter((d) => {
+        const id = String(d.id || d.name || '');
+        if (keep.has(id) || used.has(id)) return true;
+        return !known.has(id);
+      });
+      if (kept.length !== before) {
+        if (!leanLoggedOnce) {
+          leanLoggedOnce = true;
+          this.emit('log', { text: `[工具瘦身] 保留 ${kept.length}/${before} 个工具（${days} 天内没用过的不下发，可在设置里关）` });
+        }
+        toolDefs.length = 0;
+        toolDefs.push(...kept);
+      }
+    }
     // 排障：本次因为什么少了哪些工具（会话详情可见）
     session.excludedTools = [...availability.entries()]
       .filter(([, st]) => !st.enabled)
@@ -800,6 +836,7 @@ export class Orchestrator {
         const result = blocked
           ? { content: `错误：${blocked.reason || '该工具调用被 Skill 拒绝'}`, isError: true }
           : await executeTool(toolDefs, ctx, name, argsRaw);
+        if (!blocked) recordToolUse(name);   // 记录真实使用，供"工具瘦身"判断谁还有用
         try {
           await skillManager.runHook('after-tool', {
             ...skillContext, toolName: name, argsRaw, result, session
@@ -1226,6 +1263,32 @@ export class Orchestrator {
       maxConcurrentRuns: cfg.maxConcurrentRuns
     };
   }
+}
+
+/**
+ * 判断一批新消息是不是"噪声"：纯图片/表情、没人 @ 或引用机器人、也不是主人发的。
+ * 这类消息叫模型起来它也会选择沉默 —— 但那一轮输入 token（约 3 万）已经花掉了。
+ * 保守起见：只要有一条带实质文字、有人 @/引用机器人、或主人发的，都不算噪声。
+ */
+let leanLoggedOnce = false;   // "工具瘦身"只提示一次，别每轮刷屏
+
+function isNoiseBatch(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return false;
+  const masterQq = String(getConfig().persona?.masterQQ || '').trim();
+  let hasMedia = false;
+  for (const m of entries) {
+    if (!m) continue;
+    if (m.atSelf || m.replyToSelf) return false;
+    if (m.self) continue;
+    if (masterQq && String(m.senderId ?? '') === masterQq) return false;
+    if (m.recalled) continue;
+    const text = String(m.text ?? '').trim();
+    // 去掉媒体占位符后还剩东西 = 有正文，不算噪声
+    const bare = text.replace(/\[(?:图片|表情|动画表情|视频|语音|文件|卡片|合并转发)[^\]]*\]/g, '').trim();
+    if (bare) return false;
+    if (text) hasMedia = true;
+  }
+  return hasMedia;   // 整批只有媒体占位符才算噪声
 }
 
 function safeParse(text) {

@@ -67,6 +67,30 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     body.max_tokens = Math.round(Number(maxTokens));
   }
 
+  // ── 上下文缓存（省钱的大头）────────────────────────────────
+  // 我们的请求结构天然适合缓存：系统提示 + 工具定义在前、完全静态，动态内容（时间/未读消息）在后。
+  // · DeepSeek / Qwen / OpenAI 这类是"自动缓存"，命中后按折扣计费，不需要任何参数；
+  // · Anthropic / OpenRouter 需要在消息上打 cache_control 标记，这里按配置补上。
+  // usage 里若返回缓存命中数（prompt_cache_hit_tokens / cache_read_input_tokens），
+  // 会被记进统计，控制台能看到"缓存省了多少"。
+  if (cfg.promptCache !== false) {
+    const style = String(cfg.cacheStyle || 'auto');
+    const looksAnthropic = style === 'anthropic' || /anthropic|openrouter/i.test(String(cfg.baseUrl || ''));
+    if (looksAnthropic && Array.isArray(finalBody.messages) && finalBody.messages[0]?.role === 'system'
+        && typeof finalBody.messages[0].content === 'string') {
+      finalBody = {
+        ...finalBody,
+        messages: [
+          { role: 'system', content: [{ type: 'text', text: finalBody.messages[0].content, cache_control: { type: 'ephemeral' } }] },
+          ...finalBody.messages.slice(1)
+        ]
+      };
+    }
+    if (cfg.cacheExtraBody && typeof cfg.cacheExtraBody === 'object') {
+      finalBody = { ...finalBody, ...cfg.cacheExtraBody };
+    }
+  }
+
   // 扩展提供的请求参数转换（llm.request-params）：插件可按会话改写 tools/参数。
   // 串行执行，后者能看到前者的输出；单个插件抛错只记录，不影响请求。
   let finalBody = body;
@@ -180,9 +204,11 @@ export async function listModels() {
   return list.map((m) => ({ id: String(m.id ?? m.model ?? m) })).filter((m) => m.id);
 }
 
-/** 累加 usage。 */
+/** 累加 usage（含缓存命中数；不同厂商字段名不一样，都认）。 */
 export function addUsage(target, usage) {
   if (!usage) return target;
+  const cached = Number(usage.prompt_cache_hit_tokens ?? usage.cache_read_input_tokens ?? usage.cached_tokens ?? 0) || 0;
+  if (cached) target.cachedTokens = (Number(target.cachedTokens) || 0) + cached;
   target.promptTokens += Number(usage.prompt_tokens) || 0;
   target.completionTokens += Number(usage.completion_tokens) || 0;
   target.totalTokens += Number(usage.total_tokens) || (Number(usage.prompt_tokens) || 0) + (Number(usage.completion_tokens) || 0);
@@ -190,7 +216,7 @@ export function addUsage(target, usage) {
 }
 
 export function emptyUsage() {
-  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, calls: 0 };
+  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, calls: 0 };
 }
 
 /** 按配置单价折算成本（元）。 */

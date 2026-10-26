@@ -1475,7 +1475,10 @@ async function refreshStatus() {
     }
     $('#model-label').textContent = `模型：${s.orchestrator.model || '未设置'}`;
     const u = s.usage;
-    $('#usage-label').textContent = `今日：${u.runs} 次运行 · ${fmtTokens(u.totalTokens)}${u.cost ? ` · ¥${u.cost.toFixed(2)}` : ''}`;
+    // 有缓存命中就把"省了多少"直接摆出来（DeepSeek/Qwen 自动缓存，命中部分按折扣计费）
+    const cached = Number(u.cachedTokens) || 0;
+    const cacheNote = cached > 0 ? ` · 缓存命中 ${fmtTokens(cached)}（${Math.round(cached * 100 / Math.max(1, u.promptTokens || 1))}%）` : '';
+    $('#usage-label').textContent = `今日：${u.runs} 次运行 · ${fmtTokens(u.totalTokens)}${cacheNote}${u.cost ? ` · ¥${u.cost.toFixed(2)}` : ''}`;
     // 显式展示时区（记忆系统 01 第六节：页面时间必须让用户看到北京时间）
     const tzEl = document.getElementById('tz-label');
     if (tzEl) {

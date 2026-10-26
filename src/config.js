@@ -15,7 +15,8 @@ export const DEFAULT_CONFIG = {
   api: {
     baseUrl: 'http://127.0.0.1:8787/v1',   // 例如本机 buddy2api 网关或任何 OpenAI 兼容端点
     apiKey: '',
-    model: '',                              // UI 里选择/填写
+    model: '',
+    promptCache: true,                     // 用厂商的上下文缓存：DeepSeek/Qwen 自动生效，Anthropic 风格打 cache_control
     provider: '',                           // 当前模型所属提供商（多提供商目录的选中项）
     vision: true,                           // 模型是否支持图片输入（关掉则移除看图工具）
     temperature: 0.8,
@@ -90,6 +91,8 @@ export const DEFAULT_CONFIG = {
   drainDelayMs: 1200,       // 一次运行结束后发现还有未读，到下一次运行的间隔
   maxConcurrentRuns: 2,     // 全局同时进行的 agent 运行数
   // 发送保护
+  // 工具瘦身：leanDays 内没用过的工具不下发（从没记录过的保留）。keepAlways 永远下发。
+  tools: { leanMode: false, leanDays: 30, keepAlways: [] },
   send: {
     minGapMs: 1000,         // 相邻两条消息最小间隔
     maxGapMs: 3000,         // 最大间隔
@@ -98,6 +101,18 @@ export const DEFAULT_CONFIG = {
     maxPerHour: 0,    // 0 = 不限速（已取消频率限制）
     hardSplitAt: 4000       // QQ 硬限制切分（0 = 不限制）
   },
+  // 数据维护：纯缓存类目录的保留天数（0 = 不清理）。图库镜像默认不动，避免页面 404。
+  store: {
+    maxMessagesPerChat: 2000,
+    pastStateLimit: 40,
+    pastStateMaxChars: 3000,
+    keepSessionFiles: 100,
+    logRetentionDays: 14,
+    coverRetentionDays: 7,
+    galleryRetentionDays: 0
+  },
+  // 唤醒门禁：整批都是纯图/表情、又没人 @/引用、也不是主人发的 → 不叫模型（省一次 ~20k token）
+  wake: { skipNoiseBatches: true },
   // 主动开话题（可选）
   proactive: {
     enabled: false,

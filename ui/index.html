@@ -48,6 +48,7 @@
 
   <nav id="tabs">
     <button class="tab active" data-tab="sessions">会话</button>
+    <button class="tab" data-tab="feed-scroller">刷视频 / 上网</button>
     <button class="tab" data-tab="chats">存档</button>
     <button class="tab" data-tab="snowluma">协议端</button>
     <button class="tab" data-tab="skills">技能</button>
@@ -66,6 +67,17 @@
       </div>
     </section>
 
+    <!-- 刷视频 / 上网：由插件 feed-scroller 注入（页面脚本 ui/feed-scroller/ui.js，数据 ui/feed-scroller/state.json）。
+         想回退：删掉这段与上面的页签、body 末尾的 script，或用 ui/index.html.feed-scroller.bak 覆盖。 -->
+    <section id="view-feed-scroller" class="view">
+      <aside class="list-pane">
+        <div class="list-head muted">刷视频 / 上网</div>
+        <div id="feed-scroller-side" class="feed-scroller-scroll"><div class="empty-hint">正在读取…</div></div>
+      </aside>
+      <div class="detail-pane">
+        <div id="feed-scroller-main"><div class="empty-hint">正在读取她的内容流与浏览器状态…</div></div>
+      </div>
+    </section>
     <!-- 存档视图 -->
     <section id="view-chats" class="view">
       <aside id="chat-list" class="list-pane">
@@ -95,5 +107,6 @@
   </main>
 
   <script src="/app.js"></script>
+  <script defer src="/feed-scroller/ui.js"></script>
 </body>
 </html>

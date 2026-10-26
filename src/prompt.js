@@ -533,5 +533,15 @@ export function buildUserPrompt(ctx) {
     );
   }
 
-  return parts.join('\n\n');
+  // 同段落去重：扩展的提示词片段偶尔和核心段落撞车（同一个【本次唤醒】/【过去状态】
+  // 出现两三次），每多一段就白烧 1~2k token。完全相同的段只保留第一次。
+  const seenParts = new Set();
+  const uniqParts = [];
+  for (const part of parts) {
+    const key = String(part ?? '').trim();
+    if (!key || seenParts.has(key)) continue;
+    seenParts.add(key);
+    uniqParts.push(part);
+  }
+  return uniqParts.join('\n\n');
 }

@@ -35,6 +35,7 @@ import { skillManager, looksLikeSecretKey } from './skills/manager.js';
 import { setSkillConfig, setSkillEnabled, listConfiguredSkillIds } from './skills/config.js';
 import { listTools, getToolAvailability } from './tool-registry.js';
 import { KB_TOOL_NAMES } from './tools.js';
+import { seedFromSessions } from './tool-usage.js';
 import { validateZipStructure, unzipToModuleDir, readZipManifest, findModuleDirsById, repairMojibakeNames } from './zip-install.js';
 
 // 全局 fetch（undici）默认连接建立超时只有 10 秒，openrouter.ai 这类海外端点
@@ -134,6 +135,54 @@ export function createApp({ log = console.log } = {}) {
    * Skill 重扫：启动与「刷新」按钮共用的唯一入口。
    * 重扫磁盘 → 激活已启用项 → 重建 watcher（fs.watch 在目录重建后会失效）。
    */
+  // 首次启动时用历史会话补一份"工具使用统计"：否则一开瘦身，所有工具都被当成没用过
+  // （只留 keepAlways），等于把工具箱清空。只在文件不存在时补一次，避免重复累加。
+  try {
+    const usageFile = path.join(DATA_DIR, 'tool-usage.json');
+    if (!fs.existsSync(usageFile)) {
+      const seeded = seedFromSessions(path.join(DATA_DIR, 'sessions'));
+      if (seeded) log(`[工具使用] 已从历史运行补齐 ${seeded} 条工具调用记录`);
+    }
+  } catch (error) {
+    log(`[工具使用] 初始化失败：${error?.message ?? error}`);
+  }
+
+  /**
+   * 数据维护：清掉纯缓存类目录里的旧文件（日志、封面收件箱）。
+   * data/ 里真正要紧的是 currency.json / messages / sessions / 记忆，这些一律不动。
+   * 图库镜像（data/gallery-mirror）默认保留 —— 那是给人看的资源，删了页面就 404；
+   * 要清就显式配 store.galleryRetentionDays（天）或手动删目录重新镜像。
+   */
+  function pruneData({ quiet = true } = {}) {
+    const removed = [];
+    const sweep = (dir, days, label) => {
+      if (!(days > 0)) return;
+      const cutoff = Date.now() - days * 86400000;
+      let files = [];
+      try { files = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      let n = 0;
+      for (const f of files) {
+        if (!f.isFile()) continue;
+        const full = path.join(dir, f.name);
+        try {
+          const st = fs.statSync(full);
+          if (st.mtimeMs < cutoff) { fs.unlinkSync(full); n += 1; }
+        } catch { /* 跳过 */ }
+      }
+      if (n) { removed.push(`${label} ${n} 个`); if (!quiet) log(`[维护] 清理 ${label}：${n} 个文件（>${days} 天）`); }
+    };
+    const store = getConfig().store || {};
+    sweep(path.join(DATA_DIR, 'logs'), Number(store.logRetentionDays) || 14, '日志');
+    sweep(path.join(DATA_DIR, 'cover-inbox'), Number(store.coverRetentionDays) || 7, '封面收件箱');
+    sweep(path.join(DATA_DIR, 'gallery-mirror'), Number(store.galleryRetentionDays) || 0, '图库镜像');
+    return removed;
+  }
+  try {
+    const removed = pruneData({ quiet: false });
+    if (removed.length) log(`[维护] 启动清理：${removed.join('，')}`);
+  } catch (error) { log(`[维护] 启动清理失败：${error?.message ?? error}`); }
+  setInterval(() => { try { pruneData(); } catch { /* 忽略 */ } }, 6 * 3600 * 1000).unref?.();
+
   async function reloadSkills({ reason = 'manual' } = {}) {
     const result = await loadPlugins({ log, deps: { getSender: () => sender, getOnebot: () => onebot } });
     for (const st of skillManager.list(skillRuntimeContext())) {

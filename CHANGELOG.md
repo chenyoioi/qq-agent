@@ -1,5 +1,33 @@
 # 更新日志
 
+## 1.1.56（2026-10-26）
+
+### 全部优化项落地：省 token、省磁盘、看得见缓存
+
+按审计（24h / 342 轮 / 1376 万 token，prompt 占 99.3%）把能做的都做了：
+
+1. **噪声批不叫模型**（`wake.skipNoiseBatches`，默认开）：整批都是纯图/表情、
+   没人 @/引用机器人、也不是主人发的 → 直接跳过（消息已读、零 token）。
+   审计里 36% 的运行属于"叫起来也沉默"，平均 31k token/次。
+2. **工具瘦身**：新增 `src/tool-usage.js` 记录每个工具的真实调用（首启用历史会话补种，
+   本次补了 175 条），`tools.leanMode` 打开后 N 天没用过的工具不再下发；
+   从没记录过的工具保留（没数据 ≠ 没用）。另外按审计结果直接关掉 9 个长期没人用的
+   工具（像素画 2 / 插画 2 / 分享卡读取 2 / teacher_control / 好感度调参 2）——
+   启用工具 48 → 39，工具描述体量 ≈ 4.0k → 2.5k token/次。
+3. **上下文缓存**：`api.promptCache` 默认开。DeepSeek/Qwen 这类自动缓存不用参数，
+   Anthropic/OpenRouter 风格会自动给系统提示打 `cache_control: ephemeral`；
+   `usage` 里的缓存命中数（`prompt_cache_hit_tokens` / `cache_read_input_tokens`）
+   现在会被累计，控制台状态条显示「缓存命中 X（N%）」。
+4. **提示词去重**：`buildUserPrompt` 里完全相同的段落只保留一次
+   （之前见过同一 `【本次唤醒】` 出现 3 次、`【过去状态】` 2 次）。
+5. **数据维护**：启动 + 每 6 小时清理 `data/logs`（>14 天）与 `data/cover-inbox`（>7 天），
+   天数可配；图库镜像默认不动（删了页面 404），想清理配 `store.galleryRetentionDays`。
+6. **发送限流 3 → 5 条/分钟**：3 条会把正常回复吞掉（15:50 主人指令就失败过一次）。
+
+没动的一项（说明理由）：把 group-manner / probability-reply / reply-economy /
+adaptive-group-style / early-finish 五个"要不要开口"的插件合并成一个决策层——
+那是行为重写，会让现在的人格参数全部重新调，风险大于收益；真要合，得单独一轮做。
+
 ## 1.1.55（2026-10-26）
 
 ### 成本与稳健性优化（审计后动手）
