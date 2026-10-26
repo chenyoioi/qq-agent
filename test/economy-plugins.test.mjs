@@ -129,9 +129,9 @@ const balOf = (uid) => money().balance({ scope: SCOPE, userId: uid }).balance;
     assert.ok(lines.length >= 2, `每个商品至少两行（名称/金币），实际：${JSON.stringify(lines)}`);
     assert.ok(!/金币/.test(lines[0]), `第一行是商品名，不该带金币：${lines[0]}`);
     assert.match(lines[1], /^\d+ 金币/, `第二行是价格+金币：${lines[1]}`);
-    if (lines[2] !== undefined) assert.ok(!/^\d+ 金币/.test(lines[2]), '第三行是介绍');
+    if (lines[2] !== undefined) assert.match(lines[2], /^- /, '第三行是介绍，前面带「-」');
   }
-  assert.match(r.sent[0], /点歌券\n50 金币/, '点歌券：名称一行、50 金币一行');
+  assert.match(r.sent[0], /点歌券\n50 金币\n- /, '点歌券：名称 / 50 金币 / - 介绍');
   ok(`商店：一条消息 ${blocks.length} 个商品块，每块「名称 / 价格 金币 / 介绍」，块间空行`);
 }
 

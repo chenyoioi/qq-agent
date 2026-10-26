@@ -101,7 +101,7 @@ function findItem(items, key) {
  * 例：
  *   点歌券
  *   50 金币（剩 3）
- *   点一首歌让她唱（念唱）
+ *   - 点一首歌让她唱（念唱）
  */
 function listText(items) {
   const u = unit();
@@ -109,7 +109,7 @@ function listText(items) {
   return items.map((it) => {
     const stock = it.stock === null || it.stock === undefined ? '' : (Number(it.stock) > 0 ? `（剩 ${it.stock}）` : '（已售罄）');
     const lines = [it.name, `${it.price} ${u}${stock}`];
-    if (it.desc) lines.push(it.desc);            // 没有介绍就不占行
+    if (it.desc) lines.push(`- ${it.desc}`);     // 介绍前加「-」，和价格行区分开；没介绍就不占行
     return lines.join('\n');
   }).join('\n\n');                              // 商品之间空一行，QQ 里好认
 }
