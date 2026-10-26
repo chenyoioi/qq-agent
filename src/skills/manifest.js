@@ -46,7 +46,10 @@ export function kindOfDir(dirPath) {
   return DIR_KIND[String(base || '').toLowerCase()] || null;
 }
 
-const VALID_CATEGORIES = new Set(['model', 'message', 'knowledge', 'media', 'utility']);
+// 分类用于控制台分组与筛选。economy（经济）/ fun（娱乐）是后来加的业务分类，
+// 之前不在白名单里，导致签到/商店/红包/打赏/表情反应每次启动都刷一条
+// 「category 非法，已回退为 utility」并且分组错乱。
+const VALID_CATEGORIES = new Set(['model', 'message', 'knowledge', 'media', 'utility', 'economy', 'fun']);
 
 function asArray(value) {
   if (value === null || value === undefined) return [];

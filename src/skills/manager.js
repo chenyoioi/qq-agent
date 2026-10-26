@@ -19,7 +19,11 @@ import { SKILL_ERROR, SkillError, skillErrorText } from './errors.js';
 import { isSkillEnabledInConfig, getSkillConfig } from './config.js';
 
 /** hook 默认超时：单个 Skill 卡死不能拖垮整轮对话。 */
-const DEFAULT_HOOK_TIMEOUT_MS = 5000;
+// 12s：onMessage 钩子里可能真的在发消息（签到/商店/红包/通知都是"命中就回"），
+// 5 秒在限流或网络慢的时候会被判超时 —— 消息已经发出去了，后面的 markRead 却没跑，
+// 结果模型又被叫起来回一遍（浪费一轮 token）。钩子在 app.js 里是 fire-and-forget，
+// 不会挡住入库热路径，所以放宽到 12 秒是安全的。
+const DEFAULT_HOOK_TIMEOUT_MS = 12000;
 
 /**
  * 字段名像不像密钥（用于把值掩码成 ******、配置面板渲染成密码框）。

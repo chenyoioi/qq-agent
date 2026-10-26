@@ -104,7 +104,11 @@ function builtinToolDefs() {
         properties: {
           messages: { description: '要发送的内容：字符串=一条；数组=分多条', oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
           replyToMessageId: { type: ['integer', 'string'], description: '要引用/回复的消息 id（聊天记录里每条消息前的 #数字，可选）' },
-          atUserId: { type: ['integer', 'string'], description: '要 @ 的群成员 QQ 号（可选，与引用二选一，不要滥用）' }
+          atUserId: { type: ['integer', 'string'], description: '要 @ 的群成员 QQ 号（可选，与引用二选一，不要滥用）' },
+          final: {
+            type: 'boolean',
+            description: '这次的回复就是本轮最后一句、说完没别的事要做 → 传 true，本轮立刻结束（省掉一次模型调用）。还要继续查/继续发就别传。'
+          }
         },
         required: ['messages']
       },
@@ -135,7 +139,11 @@ function builtinToolDefs() {
           });
           ctx.session.sent.push(...result.sent.map((s) => ({ type: 'text', text: s.text, at: s.at })));
           ctx.emit('session-update', ctx.session.id);
-          const note = ['已发送。不要输出"已发送"类汇报，继续思考下一步或直接结束。'];
+          // final=true：模型宣告"说完了"，本轮直接收尾（不再多跑一轮只为了调 finish）
+          if (args.final === true) ctx.session.finalSent = true;
+          const note = [args.final === true
+            ? '已发送，本轮结束。'
+            : '已发送。不要输出"已发送"类汇报，继续思考下一步或直接结束（说完了就传 final:true 或调 finish 结束）。'];
           if (result.failed.length) note.push(`（另有 ${result.failed.length} 条发送失败：${result.failed.map((f) => f.error).join('；')}——成功的不需要重发，失败的请稍后再试或减少条数）`);
           return ok({ sent: result.sent.length, messageIds: result.sent.map((s) => s.messageId), note: note.join('') });
         } catch (error) {

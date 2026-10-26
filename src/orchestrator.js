@@ -862,6 +862,13 @@ export class Orchestrator {
           }
         }
       }
+      // send_message 带了 final:true = 模型说"讲完了"，本轮到此为止。
+      // 不然它还要多跑一轮只为了调 finish —— 那一轮的输入 token 白花。
+      if (session.finalSent) {
+        messages.push(...toolResults.map(({ role, tool_call_id, name, content }) => ({ role, tool_call_id, content, name })));
+        finish = true;
+        break;
+      }
       messages.push(...toolResults.map(({ role, tool_call_id, name, content }) => ({ role, tool_call_id, content, name })));
       // 图片消息跟随在全部 tool 结果之后（OpenAI 校验要求每个 tool_call 都有对应 tool 消息）
       messages.push(...imageUserMessages);

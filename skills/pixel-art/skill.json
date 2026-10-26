@@ -1,0 +1,88 @@
+{
+  "id": "pixel-art",
+  "name": "像素画板",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "media",
+  "description": "画 16~64 像素的像素画：能按描述一格一格画，也能随机生成（对称精灵/花纹/徽章/风景），画完等比放大成不透明底的 PNG 直接发到聊天里。",
+  "author": "本地生成",
+  "enabledByDefault": true,
+  "capabilities": [],
+  "requires": [],
+  "settings": {
+    "defaultSize": 32,
+    "displayPixels": 384,
+    "maxUpscale": 32,
+    "defaultPalette": "auto",
+    "background": "auto",
+    "announce": false,
+    "keepFiles": 30
+  },
+  "configSchema": {
+    "defaultSize": {
+      "type": "number",
+      "label": "默认画布边长（像素）",
+      "description": "16~64。模型没指定 size 时用这个。16 最经典、64 细节最多；32 是细节和可读性的平衡点。默认 32。",
+      "min": 16,
+      "max": 64
+    },
+    "displayPixels": {
+      "type": "number",
+      "label": "放大后的目标边长（像素）",
+      "description": "像素画本身很小，发出去前会按整数倍最近邻放大（等比放大，不做插值，所以不会糊）。这里填放大后的目标边长，默认 384。程序会自动取一个整数倍：16 像素的图放大 24 倍、32 像素放大 12 倍、64 像素放大 6 倍，最终都接近这个值。",
+      "min": 64,
+      "max": 1024
+    },
+    "maxUpscale": {
+      "type": "number",
+      "label": "单格最大放大倍数",
+      "description": "默认 32。只在「画布很小但目标边长很大」时才起限制作用，防止意外生成超大图。1~64。",
+      "min": 1,
+      "max": 64
+    },
+    "defaultPalette": {
+      "type": "enum",
+      "values": [
+        "auto",
+        "cute",
+        "retro",
+        "gameboy",
+        "pastel",
+        "vivid",
+        "night"
+      ],
+      "label": "默认配色方案",
+      "description": "auto（默认）= 模型自己排像素时用糖果配色（保证「画个红爱心」真的是红的），随机生成时每次随机换一套。也可固定成：cute 糖果、retro 红白机、gameboy 四色绿、pastel 柔和、vivid 高饱和、night 暗夜霓虹。模型可以在调用时用 palette 参数覆盖这里的设置。"
+    },
+    "background": {
+      "type": "enum",
+      "values": [
+        "auto",
+        "white",
+        "black"
+      ],
+      "label": "背景（透明底已禁用）",
+      "description": "输出一律是不透明底，这里选底色。auto（默认）= 每套配色有自己的首选底色（糖果/红白机/柔和/高饱和是浅底、暗夜霓虹是暗底、四色绿是经典 Game Boy 亮绿屏），只有当画面本身和它太接近（会白画白底）时才自动翻到另一档。white = 一律纯白底。black = 一律纯黑底。"
+    },
+    "announce": {
+      "type": "boolean",
+      "label": "额外发一条尺寸说明",
+      "description": "关闭时（默认）只发图片本身，由机器人自己配一句话。开启后工具会额外补一条短消息说明尺寸和配色。"
+    },
+    "keepFiles": {
+      "type": "number",
+      "label": "本地留档张数",
+      "description": "画好的 PNG 会存在数据目录的 pixel-art 子目录里，只保留最近这么多张，超出的自动删掉。默认 30；填 0 = 不清理。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "pixel-art-note",
+        "title": "像素画",
+        "priority": 34,
+        "content": "群友说「画个像素画」「来张像素图」「画一个像素爱心/笑脸/星星」时用像素画工具。能一句话说清画什么的（爱心、笑脸、星星、小房子、小猫），自己用 draw_pixel_art 排像素：art 是字符网格，每行一个字符串，`.` 是背景（图片一律是不透明底，没有透明像素），其余字符是颜色（0 最暗 / 1 中间 / 2 最亮 / k 黑 / w 白 / r 红 / o 橙 / y 黄 / g 绿 / c 青 / b 蓝 / p 紫 / m 粉 / e 肤色 / s 灰）。排像素时最容易翻车的一点是各行字符数不相等（想画 16×16 就每一行都必须正好 16 个字符）——提交前逐行数一遍，工具虽然会自动对齐，但裁过的形状可能歪一格。说不出具体画什么、或只是「随便来一张」，就用 random_pixel_art 随机生成。两种方式都会把图片直接发出去，你只要配一句短话，别复述尺寸和配色，也别再重复发图。"
+      }
+    ]
+  }
+}
