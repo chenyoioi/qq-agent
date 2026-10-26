@@ -1,0 +1,21 @@
+{
+  "id": "notice",
+  "name": "群通知",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "主人发「通知 具体内容」，机器人就 @全员 把内容说一遍。完全不走模型：命中就直接发（0 token、秒回）；只有主人能发，别人发无效。控制台「群通知」页可以直接编辑长文并 @全员 发到指定群，还能看发送记录。",
+  "author": "qq-agent",
+  "enabledByDefault": true,
+  "permissions": [],
+  "settings": {
+    "header": "📢 群通知",
+    "atAll": true,
+    "allowTargetGroup": true
+  },
+  "configSchema": {
+    "header": { "type": "string", "group": "群通知", "label": "通知开头那句", "description": "默认「📢 群通知」，留空就只发正文。" },
+    "atAll": { "type": "boolean", "group": "群通知", "label": "发通知时 @全员", "description": "默认开。关掉就只发文字不 @人。" },
+    "allowTargetGroup": { "type": "boolean", "group": "群通知", "label": "允许指定发到别的群", "description": "开启后「通知 571522597 内容」会发到那个群（必须在白名单里）；关闭则只能在本群发。" }
+  }
+}

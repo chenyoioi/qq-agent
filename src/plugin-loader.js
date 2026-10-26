@@ -116,9 +116,9 @@ function makeSkillStorage(skillId) {
   };
 }
 
-function createSkillApi(skillId, permissions = []) {
+function createSkillApi(skillId, permissions = [], deps = {}) {
   const has = (name) => permissions.includes(name);
-  return {
+  const api = {
     // 注册工具（自动加 skillId 前缀 + 绑定来源，便于开关联动与批量清理）
     registerTool: (def) => {
       if (!def?.id) throw new Error('工具必须提供 id');
@@ -181,6 +181,13 @@ function createSkillApi(skillId, permissions = []) {
       }
     }
   };
+  // 发送队列（可选）：面板类插件要主动发消息时用（api.sender.sendTextBatch）。
+  // 用 getter 是因为 sender 在 app.js 里创建得比插件加载晚，不能直接取值。
+  Object.defineProperty(api, 'sender', {
+    enumerable: true,
+    get: () => (typeof deps.getSender === 'function' ? deps.getSender() : null)
+  });
+  return api;
 }
 
 /** 读取目录里的清单：优先 skill.json，其次 plugin.json（兼容旧插件）。 */
@@ -249,7 +256,7 @@ function lintKindPlacement(kind, { manifest, toolIds, providers, hooks }, log) {
  *
  * @returns {Promise<{dir, loaded, id?, error?, skill?}>}
  */
-async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
+async function loadSkillDir(dir, { log = console.log, kind = null, deps = {} } = {}) {
   const dirName = path.basename(dir);
   const found = readManifest(dir);
   const hadPrevious = found.error ? null : skillManager.isLoaded(
@@ -379,7 +386,7 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
   }
 
   const permissions = Array.isArray(found.raw.permissions) ? found.raw.permissions : [];
-  const api = createSkillApi(manifest.id, permissions);
+  const api = createSkillApi(manifest.id, permissions, deps);
 
   // ── 新旧交替的顺序闸（2026-09 修订版）────────────────────────────────────
   // 目标有两个，且互相牵制：
@@ -507,7 +514,7 @@ async function loadSkillDir(dir, { log = console.log, kind = null } = {}) {
 }
 
 /** 扫描一个目录下的所有 Skill。 */
-async function loadSkillRoot(rootDir, { log = console.log, label = 'skill' } = {}) {
+async function loadSkillRoot(rootDir, { log = console.log, label = 'skill', deps = {} } = {}) {
   if (!fs.existsSync(rootDir)) {
     // 不再静默：目录找不到必须打日志（历史上这里返回 missing 后被丢弃，
     // 表现为"安装版一个 Skill 都没有，且日志里毫无线索"）。
@@ -526,7 +533,7 @@ async function loadSkillRoot(rootDir, { log = console.log, label = 'skill' } = {
   const kind = kindOfDir(rootDir);
   for (const dir of dirs) {
     // 逐个串行加载：并行 import 时若两个 Skill 抢同一 id，顺序不确定
-    results.push(await loadSkillDir(dir, { log, kind }));
+    results.push(await loadSkillDir(dir, { log, kind, deps }));
   }
   const loaded = results.filter((r) => r.loaded);
   const failed = results.filter((r) => !r.loaded);
@@ -599,12 +606,12 @@ export function normalizeInstalledDirNames({ roots = null, log = console.log } =
  * 加载全部 Skill（skills/ + plugins/）。
  * 幂等：重复调用会重新加载并覆盖同 id 的 Skill（热重载依赖这个语义）。
  */
-export async function loadPlugins({ log = console.log, roots = null } = {}) {
+export async function loadPlugins({ log = console.log, roots = null, deps = {} } = {}) {
   const skillsRoot = roots?.skills ? path.resolve(roots.skills) : SKILLS_DIR;
   const pluginsRoot = roots?.plugins ? path.resolve(roots.plugins) : PLUGINS_DIR;
   skillManager.setLog(log);
-  const skillRes = await loadSkillRoot(skillsRoot, { log, label: 'skill' });
-  const pluginRes = await loadSkillRoot(pluginsRoot, { log, label: 'plugin' });
+  const skillRes = await loadSkillRoot(skillsRoot, { log, label: 'skill', deps });
+  const pluginRes = await loadSkillRoot(pluginsRoot, { log, label: 'plugin', deps });
   // 与磁盘对齐：把已经不存在于任何目录里的 Skill 卸掉（开发期删目录/改名的幽灵残留）。
   // 注意"存活集合"包含加载失败的 id —— 文件还在只是这次没加载成功，不触发卸载。
   // 加载失败的 Skill 现在分两种：

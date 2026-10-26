@@ -181,7 +181,8 @@ export class SendQueue {
         if (gap > 0) await sleep(gap);
         const data = await this.onebot.sendText(kind, id, text, {
           replyToMessageId: i === 0 ? options.replyToMessageId : null, // 引用挂在第一条上：回的就是那条
-          atUserId: i === 0 ? options.atUserId : null
+          atUserId: i === 0 ? options.atUserId : null,
+          atAll: i === 0 && options.atAll === true                    // @全员 也只挂第一条
         });
         const ts = Date.now();
         this.store.appendSelf(chatKey, { text, ts });

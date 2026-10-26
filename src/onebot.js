@@ -183,7 +183,7 @@ export class OneBotClient {
     return this.call(action, params);
   }
 
-  async sendText(kind, id, text, { replyToMessageId = null, atUserId = null } = {}) {
+  async sendText(kind, id, text, { replyToMessageId = null, atUserId = null, atAll = false } = {}) {
     const segments = [];
     if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
       const rid = String(replyToMessageId).trim();
@@ -192,9 +192,11 @@ export class OneBotClient {
     }
     if (atUserId !== undefined && atUserId !== null && String(atUserId).trim() !== '') {
       const at = String(atUserId).trim();
-      if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all');
+      if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all（要 @全员 用 atAll）');
       segments.push({ type: 'at', data: { qq: at } });
     }
+    // @全员：单独一个开关（OneBot 里是 qq:'all' 的 at 段）
+    if (atAll === true) segments.push({ type: 'at', data: { qq: 'all' } });
     segments.push({ type: 'text', data: { text: escapeCqText(String(text ?? '')) } });
     return this.sendSegments(kind, id, segments);
   }
