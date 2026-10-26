@@ -118,16 +118,21 @@ const balOf = (uid) => money().balance({ scope: SCOPE, userId: uid }).balance;
   ok('查余额：「余额 / 我的金币」报自己的金币与连签，别的话不误触发');
 }
 
-// ③ 商店：一行一个商品，带说明和金币单位
+// ③ 商店：每个商品三行（名称 / 金币 / 介绍），商品之间空一行
 {
   const r = await fire('shop', BOB, '商店');
-  assert.equal(r.sent.length, 1);
-  const lines = r.sent[0].split('\n');
-  assert.ok(lines.length >= 3, `清单应该多行，实际 ${lines.length} 行`);
-  assert.match(lines[0], /· \d+ 金币/);
-  assert.ok(lines.every((l) => /金币/.test(l)), '每行都要带「金币」单位');
-  assert.match(r.sent[0], /——/, '要带说明');
-  ok(`商店：一条消息 ${lines.length} 行，每行「商品 · 价格 金币（剩 N） —— 说明」`);
+  assert.equal(r.sent.length, 1, '清单应该是一条消息');
+  const blocks = r.sent[0].split('\n\n');
+  assert.ok(blocks.length >= 3, `应该多个商品块，实际 ${blocks.length} 块`);
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    assert.ok(lines.length >= 2, `每个商品至少两行（名称/金币），实际：${JSON.stringify(lines)}`);
+    assert.ok(!/金币/.test(lines[0]), `第一行是商品名，不该带金币：${lines[0]}`);
+    assert.match(lines[1], /^\d+ 金币/, `第二行是价格+金币：${lines[1]}`);
+    if (lines[2] !== undefined) assert.ok(!/^\d+ 金币/.test(lines[2]), '第三行是介绍');
+  }
+  assert.match(r.sent[0], /点歌券\n50 金币/, '点歌券：名称一行、50 金币一行');
+  ok(`商店：一条消息 ${blocks.length} 个商品块，每块「名称 / 价格 金币 / 介绍」，块间空行`);
 }
 
 // ④ 兑换：扣钱 + 回复余额

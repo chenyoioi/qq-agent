@@ -96,15 +96,22 @@ function findItem(items, key) {
   return loose.length === 1 ? loose[0] : null;
 }
 
-/** 清单文本：一行一个商品，带「金币」单位和说明。 */
+/**
+ * 清单文本：每个商品三行 —— 名称 / 价格（金币）/ 介绍，商品之间空一行。
+ * 例：
+ *   点歌券
+ *   50 金币（剩 3）
+ *   点一首歌让她唱（念唱）
+ */
 function listText(items) {
   const u = unit();
   if (!items.length) return '商店现在是空的';
   return items.map((it) => {
     const stock = it.stock === null || it.stock === undefined ? '' : (Number(it.stock) > 0 ? `（剩 ${it.stock}）` : '（已售罄）');
-    const desc = it.desc ? ` —— ${it.desc}` : '';
-    return `${it.name} · ${it.price} ${u}${stock}${desc}`;
-  }).join('\n');
+    const lines = [it.name, `${it.price} ${u}${stock}`];
+    if (it.desc) lines.push(it.desc);            // 没有介绍就不占行
+    return lines.join('\n');
+  }).join('\n\n');                              // 商品之间空一行，QQ 里好认
 }
 
 function cleanText(text) {

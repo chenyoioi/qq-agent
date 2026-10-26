@@ -1,22 +1,39 @@
 {
   "id": "shop",
   "name": "金币商店",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "apiVersion": 1,
   "category": "economy",
-  "description": "群里说「商店」直接发商品清单（一行一个，带说明和金币单位），说「兑换 点歌券」当场扣金币并记账。完全不走模型：0 token、秒回；扣款走预扣→交付→结算，失败自动退回。商品在控制台「金币」页签里自己改。",
+  "description": "群里说「商店」直接发商品清单（每个商品：名称一行、金币一行、介绍一行），说「兑换 点歌券」当场扣金币并记账。完全不走模型：0 token、秒回；扣款走预扣→交付→结算，失败自动退回。商品在控制台「金币」页签里自己改。",
   "author": "qq-agent",
   "enabledByDefault": true,
   "permissions": [],
-  "requires": ["currency.v1"],
+  "requires": [
+    "currency.v1"
+  ],
   "settings": {
     "maxStock": 9999,
     "allowNegativeStock": false,
     "deliverNotice": "凭这条记录找管理员领取"
   },
   "configSchema": {
-    "maxStock": { "type": "number", "group": "商店", "label": "单个商品库存上限", "description": "默认 9999。" },
-    "allowNegativeStock": { "type": "boolean", "group": "商店", "label": "允许卖超（库存可为负）", "description": "关闭时库存卖完就不能兑换。" },
-    "deliverNotice": { "type": "string", "group": "商店", "label": "默认兑换提示", "description": "商品没单独写兑换文案时补这句。" }
+    "maxStock": {
+      "type": "number",
+      "group": "商店",
+      "label": "单个商品库存上限",
+      "description": "默认 9999。"
+    },
+    "allowNegativeStock": {
+      "type": "boolean",
+      "group": "商店",
+      "label": "允许卖超（库存可为负）",
+      "description": "关闭时库存卖完就不能兑换。"
+    },
+    "deliverNotice": {
+      "type": "string",
+      "group": "商店",
+      "label": "默认兑换提示",
+      "description": "商品没单独写兑换文案时补这句。"
+    }
   }
 }
