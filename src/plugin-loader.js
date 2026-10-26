@@ -187,6 +187,11 @@ function createSkillApi(skillId, permissions = [], deps = {}) {
     enumerable: true,
     get: () => (typeof deps.getSender === 'function' ? deps.getSender() : null)
   });
+  // OneBot 客户端（可选）：撤回消息（delete_msg）、查群成员这类底层动作要用它
+  Object.defineProperty(api, 'onebot', {
+    enumerable: true,
+    get: () => (typeof deps.getOnebot === 'function' ? deps.getOnebot() : null)
+  });
   return api;
 }
 

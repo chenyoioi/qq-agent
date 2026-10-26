@@ -5,7 +5,7 @@
 // （既不重复回复，也不花 token）。
 //
 // 幂等：requestId 固定成「签到:<QQ>:<业务日>」，同一天重复触发、失败重试都不会多发。
-const DEFAULTS = { baseReward: 20, streakBonus: 5, maxBonus: 50, resetHour: 0, showBalance: true };
+const DEFAULTS = { baseReward: 20, streakBonus: 5, maxBonus: 50, resetHour: 0, showBalance: true, recallAfterSec: 10 };
 const TRIGGERS = ['签到', '打卡', '领金币', '每日签到', '签到一下'];
 // 查自己余额（同样不走模型：问一句就把数字报出来）
 const QUERY_TRIGGERS = [
@@ -51,7 +51,8 @@ function conf() {
     streakBonus: num(c.streakBonus, DEFAULTS.streakBonus, 0, 10000),
     maxBonus: num(c.maxBonus, DEFAULTS.maxBonus, 0, 100000),
     resetHour: num(c.resetHour, DEFAULTS.resetHour, 0, 23),
-    showBalance: c.showBalance !== false
+    showBalance: c.showBalance !== false,
+    recallAfterSec: num(c.recallAfterSec, DEFAULTS.recallAfterSec, 0, 600)   // 0 = 不撤回
   };
 }
 
@@ -93,18 +94,42 @@ async function reply(ctx, text) {
     // 确定性命令的回复不能被"每分钟 3 条"这类限流吞掉：开一个短豁免窗口
     // （群友连发几条别的消息时，签到回复仍发得出去）
     ctx?.sender?.allowRateBypass?.(ctx.chatKey, 5000);
-    if (typeof ctx?.sender?.sendTextBatch !== 'function') return;
+    if (typeof ctx?.sender?.sendTextBatch !== 'function') return null;
+    let out = null;
     try {
-      await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+      out = await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
     } catch (error) {
       // 发送偶发被 QQ 挡回（风控抖动）：等一秒再试一次；禁言这类硬失败会在第二次照样抛
       await new Promise((r) => setTimeout(r, 1200));
-      await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
+      out = await ctx.sender.sendTextBatch(ctx.chatKey, text, {});
       log(`重试后仍失败：${error?.message ?? error}`);
     }
+    const messageId = out?.sent?.[0]?.messageId ?? null;
+    scheduleRecall(messageId, ctx.chatKey);
+    return messageId;
   } catch (error) {
     log(`签到回复失败：${error?.message ?? error}`);
+    return null;
   }
+}
+
+/**
+ * 发完 N 秒后撤回（默认 10 秒，设置里可改；0 = 不撤回）。
+ * 用 api.onebot 的 delete_msg；发出去就立即撤会让群友看不到，所以只做延时撤回。
+ */
+function scheduleRecall(messageId, chatKey) {
+  const sec = conf().recallAfterSec;
+  if (!sec || !messageId) return;
+  const timer = setTimeout(async () => {
+    const client = hostApi?.onebot;
+    if (!client?.call) { log('撤回跳过：没有可用的 OneBot 客户端'); return; }
+    try {
+      await client.call('delete_msg', { message_id: messageId }, 8000, { noExplain: true });
+    } catch (error) {
+      log(`撤回失败（${chatKey} / ${messageId}）：${error?.message ?? error}`);
+    }
+  }, sec * 1000);
+  timer.unref?.();      // 别拖住进程退出
 }
 
 /** 标已读：调度器 drainUnread 时就不会再为这条叫模型。 */

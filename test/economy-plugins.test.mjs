@@ -23,7 +23,7 @@ fs.writeFileSync(path.join(DATA_DIR, 'config.json'), JSON.stringify({
         test: ['credit', 'debit', 'transfer']
       })
     },
-    checkin: { enabled: true, baseReward: 20, streakBonus: 5, maxBonus: 50, resetHour: 0, showBalance: true },
+    checkin: { enabled: true, baseReward: 20, streakBonus: 5, maxBonus: 50, resetHour: 0, showBalance: true, recallAfterSec: 1 },
     shop: { enabled: true, maxStock: 9999, allowNegativeStock: false, deliverNotice: '凭这条记录找管理员领取' },
     'red-packet': { enabled: true, maxTotal: 10000, maxCount: 20, expireSec: 300 },
     tip: { enabled: true, amount: 10, minGapMinutes: 60, maxPerDay: 8, source: 'mint' }
@@ -34,7 +34,9 @@ fs.writeFileSync(path.join(DATA_DIR, 'config.json'), JSON.stringify({
 const { loadPlugins } = await import(path.join(ROOT, 'src/plugin-loader.js'));
 const { skillManager } = await import(path.join(ROOT, 'src/skills/manager.js'));
 const { getTool } = await import(path.join(ROOT, 'src/tool-registry.js'));
-await loadPlugins({ log: () => {} });
+const recalled = [];     // 记录 delete_msg 调用（签到回复 1 秒后自动撤回）
+const fakeOnebot = { call: async (action, params) => { if (action === 'delete_msg') recalled.push(params.message_id); return {}; } };
+await loadPlugins({ log: () => {}, deps: { getOnebot: () => fakeOnebot } });
 for (const id of ['currency', 'checkin', 'shop', 'red-packet', 'tip']) {
   try { skillManager.activate(id, {}); } catch (e) { console.log('激活失败', id, e?.message ?? e); }
 }
@@ -116,6 +118,14 @@ const balOf = (uid) => money().balance({ scope: SCOPE, userId: uid }).balance;
     assert.equal(r.sent.length, 0, `「${text}」不该被当成查余额`);
   }
   ok('查余额：「余额 / 我的金币」报自己的金币与连签，别的话不误触发');
+}
+
+// ②c 回复发送后按设置自动撤回（默认 10 秒，测试里配成 1 秒）
+{
+  await new Promise((r) => setTimeout(r, 1400));
+  assert.ok(recalled.length >= 1, `应该撤回过消息，实际 ${recalled.length} 次`);
+  assert.ok(recalled.every((id) => id === 1), '撤的应该是刚才那条回复的 messageId');
+  ok(`回复自动撤回：${recalled.length} 条按设置延迟撤回（delete_msg）`);
 }
 
 // ③ 商店：每个商品三行（名称 / 金币 / 介绍），商品之间空一行

@@ -135,7 +135,7 @@ export function createApp({ log = console.log } = {}) {
    * 重扫磁盘 → 激活已启用项 → 重建 watcher（fs.watch 在目录重建后会失效）。
    */
   async function reloadSkills({ reason = 'manual' } = {}) {
-    const result = await loadPlugins({ log, deps: { getSender: () => sender } });
+    const result = await loadPlugins({ log, deps: { getSender: () => sender, getOnebot: () => onebot } });
     for (const st of skillManager.list(skillRuntimeContext())) {
       if (st.enabled && st.loaded) {
         try { skillManager.activate(st.id, skillRuntimeContext()); } catch (error) {
